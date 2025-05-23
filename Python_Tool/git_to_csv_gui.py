@@ -30,8 +30,6 @@ def generate_git_log_csv(repo_path, output_csv_file, num_commits=None, start_dat
         return False
 
     iter_kwargs = {}
-    # 日期解析和 iter_kwargs 設定已移至 GUI 的 generate 方法中進行初步驗證
-    # 此處直接使用傳入的日期字串來建立 datetime 物件
     try:
         if start_date_str:
             dt_start = datetime.strptime(start_date_str, "%Y-%m-%d")
@@ -42,7 +40,7 @@ def generate_git_log_csv(repo_path, output_csv_file, num_commits=None, start_dat
             iter_kwargs['until'] = dt_end + timedelta(days=1)
     except ValueError:
         # 這個錯誤理論上應該在 GUI 層就被捕捉，但作為防禦性程式設計保留
-        messagebox.showerror("日期格式錯誤", "內部日期處理錯誤，格式應為 YYYY-MM-DD。")
+        messagebox.showerror("日期格式錯誤", "內部日期處理錯誤，格式應為YYYY-MM-DD。")
         return False
     except Exception as e:
         messagebox.showerror("日期處理錯誤", f"處理日期時發生錯誤: {e}")
@@ -92,7 +90,7 @@ def generate_git_log_csv(repo_path, output_csv_file, num_commits=None, start_dat
 class GitLogGUI:
     def __init__(self, master):
         self.master = master
-        master.title("Git Log to CSV")
+        master.title("Git 提交紀錄轉 CSV 工具") # 視窗標題
         master.geometry("600x400") # 視窗大小
 
         style = ttk.Style()
@@ -112,33 +110,33 @@ class GitLogGUI:
         # --- 輸出檔案 ---
         self.output_file_label = ttk.Label(master, text="輸出 CSV 檔案:")
         self.output_file_label.grid(row=1, column=0, padx=10, pady=5, sticky="w")
-        self.output_file_var = tk.StringVar(value="git_commit_history.csv")
+        self.output_file_var = tk.StringVar(value="git_commit_history.csv") # 預設輸出檔名
         self.output_file_entry = ttk.Entry(master, textvariable=self.output_file_var, width=45)
         self.output_file_entry.grid(row=1, column=1, columnspan=2, padx=10, pady=5, sticky="ew")
         self.save_as_button = ttk.Button(master, text="另存為...", command=self.save_as_output)
         self.save_as_button.grid(row=1, column=3, padx=10, pady=5)
 
         # --- 設定今日日期為預設值 ---
-        today_str = date.today().strftime("%Y-%m-%d")
+        today_str = date.today().strftime("%Y-%m-%d") # 獲取今天的日期字串，例如 "2023-10-27"
 
         # --- 開始日期 ---
         self.start_date_label = ttk.Label(master, text="開始日期 (YYYY-MM-DD):")
         self.start_date_label.grid(row=2, column=0, padx=10, pady=5, sticky="w")
-        self.start_date_var = tk.StringVar(value=today_str)
+        self.start_date_var = tk.StringVar(value=today_str) # 設定開始日期的預設值
         self.start_date_entry = ttk.Entry(master, textvariable=self.start_date_var, width=20)
         self.start_date_entry.grid(row=2, column=1, padx=10, pady=5, sticky="w")
 
         # --- 結束日期 ---
         self.end_date_label = ttk.Label(master, text="結束日期 (YYYY-MM-DD):")
         self.end_date_label.grid(row=3, column=0, padx=10, pady=5, sticky="w")
-        self.end_date_var = tk.StringVar(value=today_str)
+        self.end_date_var = tk.StringVar(value=today_str) # 設定結束日期的預設值
         self.end_date_entry = ttk.Entry(master, textvariable=self.end_date_var, width=20)
         self.end_date_entry.grid(row=3, column=1, padx=10, pady=5, sticky="w")
 
         # --- 要擷取的筆數 ---
         self.num_commits_label = ttk.Label(master, text="擷取筆數 (0或空=全部):")
         self.num_commits_label.grid(row=4, column=0, padx=10, pady=5, sticky="w")
-        self.num_commits_var = tk.StringVar(value="0")
+        self.num_commits_var = tk.StringVar(value="0") # 預設擷取全部符合條件的
         self.num_commits_entry = ttk.Entry(master, textvariable=self.num_commits_var, width=10)
         self.num_commits_entry.grid(row=4, column=1, padx=10, pady=5, sticky="w")
 
@@ -163,7 +161,7 @@ class GitLogGUI:
         path = filedialog.asksaveasfilename(
             title="儲存 CSV 檔案",
             defaultextension=".csv",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+            filetypes=[("CSV 檔案", "*.csv"), ("所有檔案", "*.*")]
         )
         if path:
             self.output_file_var.set(path)
@@ -200,42 +198,53 @@ class GitLogGUI:
 
         if start_date_input:
             try:
-                parsed_start_date = datetime.strptime(start_date_input, "%Y-%m-%d").date()
+                # 僅用於驗證格式，實際傳遞給核心函式的是字串
+                datetime.strptime(start_date_input, "%Y-%m-%d")
             except ValueError:
-                messagebox.showerror("日期格式錯誤", "開始日期格式必須為 YYYY-MM-DD。")
+                messagebox.showerror("日期格式錯誤", "開始日期格式必須為YYYY-MM-DD。")
                 return
         
         if end_date_input:
             try:
-                parsed_end_date = datetime.strptime(end_date_input, "%Y-%m-%d").date()
+                # 僅用於驗證格式
+                datetime.strptime(end_date_input, "%Y-%m-%d")
             except ValueError:
-                messagebox.showerror("日期格式錯誤", "結束日期格式必須為 YYYY-MM-DD。")
+                messagebox.showerror("日期格式錯誤", "結束日期格式必須為YYYY-MM-DD。")
                 return
         
-        if parsed_start_date and parsed_end_date and parsed_start_date > parsed_end_date:
-            messagebox.showwarning("日期錯誤", "開始日期不能晚於結束日期。")
-            return
+        # 檢查開始日期是否晚於結束日期 (如果兩者都提供了)
+        if start_date_input and end_date_input:
+            try:
+                dt_start_check = datetime.strptime(start_date_input, "%Y-%m-%d").date()
+                dt_end_check = datetime.strptime(end_date_input, "%Y-%m-%d").date()
+                if dt_start_check > dt_end_check:
+                    messagebox.showwarning("日期錯誤", "開始日期不能晚於結束日期。")
+                    return
+            except ValueError: # 理論上不會執行到這裡，因為前面已驗證格式
+                return
+
 
         self.status_var.set("處理中，請稍候...")
-        self.master.update_idletasks()
+        self.master.update_idletasks() # 更新UI以顯示"處理中"
 
         success = generate_git_log_csv(
             repo_path,
             output_file,
             num_commits if num_commits > 0 else None, # 傳遞 None 如果筆數為0
-            start_date_input if start_date_input else None,
-            end_date_input if end_date_input else None
+            start_date_input if start_date_input else None, # 傳遞 None 如果日期為空
+            end_date_input if end_date_input else None   # 傳遞 None 如果日期為空
         )
 
         if success:
             self.status_var.set(f"成功生成 CSV 檔案: '{os.path.abspath(output_file)}'")
             messagebox.showinfo("成功", f"CSV 檔案已成功生成！\n儲存於: {os.path.abspath(output_file)}")
         else:
+            # 錯誤訊息已由 generate_git_log_csv 中的 messagebox 顯示
             self.status_var.set("生成失敗或過程中出現問題。")
 
 
 if __name__ == "__main__":
-    # 提醒使用者安裝函式庫 (如果尚未安裝)
+    # 可以在此處加入提示，提醒使用者安裝必要的函式庫 (如果他們直接執行此腳本)
     # print("請確保已安裝 GitPython: pip install GitPython")
     root = tk.Tk()
     gui = GitLogGUI(root)
