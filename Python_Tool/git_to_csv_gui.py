@@ -1,19 +1,22 @@
 import git
-# from openpyxl import Workbook # 不再需要 openpyxl
-import csv # 匯入 csv 模組
+import csv
 import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+from datetime import datetime, timedelta # <--- 匯入 datetime 和 timedelta
 
-# 修改 generate_git_log_excel 為 generate_git_log_csv
-def generate_git_log_csv(repo_path, output_csv_file, num_commits=None):
+# generate_git_log_csv 函式修改
+def generate_git_log_csv(repo_path, output_csv_file, num_commits=None, start_date_str=None, end_date_str=None):
     """
     生成一份 CSV 檔案，其中包含 Git 倉儲的提交歷史。
+    最舊的 commit 在最上面。
 
     參數：
         repo_path (str): Git 倉儲的路徑。
-        output_csv_file (str): 輸出的 CSV 檔案名稱 (例如：git_log.csv)。
-        num_commits (int, optional): 要擷取的提交筆數。如果為 None 或 0，則擷取所有提交。
+        output_csv_file (str): 輸出的 CSV 檔案名稱。
+        num_commits (int, optional): 要擷取的提交筆數。如果為 None 或 0，則擷取所有符合條件的提交。
+        start_date_str (str, optional): 開始日期字串 (YYYY-MM-DD)。
+        end_date_str (str, optional): 結束日期字串 (YYYY-MM-DD)。
     """
     try:
         repo = git.Repo(repo_path)
@@ -24,34 +27,69 @@ def generate_git_log_csv(repo_path, output_csv_file, num_commits=None):
         messagebox.showerror("錯誤", f"指定的路徑 '{repo_path}' 不存在。")
         return False
     except Exception as e:
-        messagebox.showerror("錯誤", f"讀取倉儲時發生未知錯誤：{e}")
+        messagebox.showerror("錯誤", f"讀取倉儲 '{repo_path}' 時發生未知錯誤：{e}")
+        return False
+
+    iter_kwargs = {}
+    try:
+        if start_date_str:
+            # 解析開始日期
+            dt_start = datetime.strptime(start_date_str, "%Y-%m-%d")
+            iter_kwargs['since'] = dt_start
+        if end_date_str:
+            # 解析結束日期，並將 'until' 設為結束日期的後一天，以包含結束日期當天的commit
+            dt_end = datetime.strptime(end_date_str, "%Y-%m-%d")
+            iter_kwargs['until'] = dt_end + timedelta(days=1)
+
+        # 檢查日期邏輯
+        if 'since' in iter_kwargs and 'until' in iter_kwargs and iter_kwargs['since'] >= iter_kwargs['until']:
+            messagebox.showwarning("日期錯誤", "開始日期必須在結束日期之前。")
+            return False
+
+    except ValueError:
+        messagebox.showerror("日期格式錯誤", "日期格式必須為 YYYY-MM-DD。")
+        return False
+    except Exception as e:
+        messagebox.showerror("日期處理錯誤", f"處理日期時發生錯誤: {e}")
         return False
 
     headers = ["姓名", "SHA值", "commit內容"]
-    rows = [] # 用來存放所有commit資料
+    all_commit_details = []
 
     try:
-        if num_commits and num_commits > 0:
-            commits_iterator = repo.iter_commits(max_count=num_commits)
-        else:
-            commits_iterator = repo.iter_commits()
+        # 1. 獲取所有符合日期篩選的 commits (此時不使用 num_commits 限制)
+        # iter_commits 預設從新到舊
+        commits_iterator = repo.iter_commits(**iter_kwargs)
 
         for commit in commits_iterator:
             author_name = commit.author.name
             sha = commit.hexsha
-            commit_message = commit.message.strip().replace('\n', ' ') # 將換行符替換為空格，避免CSV分行問題
-            rows.append([author_name, sha, commit_message])
+            commit_message = commit.message.strip().replace('\n', ' ') # 避免CSV分行問題
+            all_commit_details.append([author_name, sha, commit_message])
+
+        # 2. 反轉列表，使得最舊的 commit 在最前面
+        all_commit_details.reverse()
+
+        # 3. 如果指定了 num_commits，則從最舊的開始取 N 筆
+        if num_commits and num_commits > 0:
+            final_commits_to_write = all_commit_details[:num_commits]
+        else:
+            final_commits_to_write = all_commit_details
+
+        if not final_commits_to_write:
+            messagebox.showinfo("提示", "在指定的日期範圍內沒有找到任何 commit。")
+            # 仍會產生一個只有表頭的空檔案
+            # return True # 或者可以選擇不產生檔案並返回 False
 
     except Exception as e:
         messagebox.showerror("錯誤", f"處理 Git 提交時發生錯誤：{e}")
         return False
 
     try:
-        # 寫入 CSV 檔案
-        with open(output_csv_file, 'w', newline='', encoding='utf-8-sig') as csvfile: # utf-8-sig 確保Excel正確讀取中文
+        with open(output_csv_file, 'w', newline='', encoding='utf-8-sig') as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow(headers) # 寫入表頭
-            writer.writerows(rows)   # 寫入所有資料行
+            writer.writerow(headers)
+            writer.writerows(final_commits_to_write)
         return True
     except Exception as e:
         messagebox.showerror("錯誤", f"儲存 CSV 檔案 '{output_csv_file}' 時發生錯誤：{e}")
@@ -60,128 +98,155 @@ def generate_git_log_csv(repo_path, output_csv_file, num_commits=None):
 class GitLogGUI:
     def __init__(self, master):
         self.master = master
-        master.title("Git Log to CSV/Excel") # 標題可以調整
-        master.geometry("550x300")
+        master.title("Git Log to CSV")
+        master.geometry("600x400") # 調整視窗大小以容納新欄位
 
         style = ttk.Style()
         style.configure("TLabel", padding=5, font=('Arial', 10))
         style.configure("TButton", padding=5, font=('Arial', 10))
         style.configure("TEntry", padding=5, font=('Arial', 10))
 
+        # --- Git 倉儲路徑 ---
         self.repo_path_label = ttk.Label(master, text="Git 倉儲路徑:")
-        self.repo_path_label.grid(row=0, column=0, padx=10, pady=10, sticky="w")
+        self.repo_path_label.grid(row=0, column=0, padx=10, pady=5, sticky="w")
         self.repo_path_var = tk.StringVar()
-        self.repo_path_entry = ttk.Entry(master, textvariable=self.repo_path_var, width=40)
-        self.repo_path_entry.grid(row=0, column=1, padx=10, pady=10, sticky="ew")
+        self.repo_path_entry = ttk.Entry(master, textvariable=self.repo_path_var, width=45)
+        self.repo_path_entry.grid(row=0, column=1, columnspan=2, padx=10, pady=5, sticky="ew")
         self.browse_repo_button = ttk.Button(master, text="瀏覽...", command=self.browse_repo)
-        self.browse_repo_button.grid(row=0, column=2, padx=10, pady=10)
+        self.browse_repo_button.grid(row=0, column=3, padx=10, pady=5)
 
         # --- 輸出檔案 ---
-        self.output_file_label = ttk.Label(master, text="輸出檔案:") # 修改標籤
-        self.output_file_label.grid(row=1, column=0, padx=10, pady=10, sticky="w")
-        self.output_file_var = tk.StringVar(value="git_commit_history.csv") # 預設檔名為 .csv
-        self.output_file_entry = ttk.Entry(master, textvariable=self.output_file_var, width=40)
-        self.output_file_entry.grid(row=1, column=1, padx=10, pady=10, sticky="ew")
-        self.save_as_button = ttk.Button(master, text="另存為...", command=self.save_as_output) # 修改儲存函式
-        self.save_as_button.grid(row=1, column=2, padx=10, pady=10)
+        self.output_file_label = ttk.Label(master, text="輸出 CSV 檔案:")
+        self.output_file_label.grid(row=1, column=0, padx=10, pady=5, sticky="w")
+        self.output_file_var = tk.StringVar(value="git_commit_history.csv")
+        self.output_file_entry = ttk.Entry(master, textvariable=self.output_file_var, width=45)
+        self.output_file_entry.grid(row=1, column=1, columnspan=2, padx=10, pady=5, sticky="ew")
+        self.save_as_button = ttk.Button(master, text="另存為...", command=self.save_as_output)
+        self.save_as_button.grid(row=1, column=3, padx=10, pady=5)
 
-        self.num_commits_label = ttk.Label(master, text="要擷取的筆數 (0 為全部):")
-        self.num_commits_label.grid(row=2, column=0, padx=10, pady=10, sticky="w")
+        # --- 開始日期 ---
+        self.start_date_label = ttk.Label(master, text="開始日期 (YYYY-MM-DD):")
+        self.start_date_label.grid(row=2, column=0, padx=10, pady=5, sticky="w")
+        self.start_date_var = tk.StringVar()
+        self.start_date_entry = ttk.Entry(master, textvariable=self.start_date_var, width=20)
+        self.start_date_entry.grid(row=2, column=1, padx=10, pady=5, sticky="w")
+
+        # --- 結束日期 ---
+        self.end_date_label = ttk.Label(master, text="結束日期 (YYYY-MM-DD):")
+        self.end_date_label.grid(row=3, column=0, padx=10, pady=5, sticky="w")
+        self.end_date_var = tk.StringVar()
+        self.end_date_entry = ttk.Entry(master, textvariable=self.end_date_var, width=20)
+        self.end_date_entry.grid(row=3, column=1, padx=10, pady=5, sticky="w")
+
+        # --- 要擷取的筆數 ---
+        self.num_commits_label = ttk.Label(master, text="擷取筆數 (0或空=全部):")
+        self.num_commits_label.grid(row=4, column=0, padx=10, pady=5, sticky="w")
         self.num_commits_var = tk.StringVar(value="0")
         self.num_commits_entry = ttk.Entry(master, textvariable=self.num_commits_var, width=10)
-        self.num_commits_entry.grid(row=2, column=1, padx=10, pady=10, sticky="w")
+        self.num_commits_entry.grid(row=4, column=1, padx=10, pady=5, sticky="w")
 
-        self.generate_button = ttk.Button(master, text="生成檔案", command=self.generate) # 修改按鈕文字
-        self.generate_button.grid(row=3, column=0, columnspan=3, padx=10, pady=20)
+        # --- 生成按鈕 ---
+        self.generate_button = ttk.Button(master, text="生成 CSV", command=self.generate)
+        self.generate_button.grid(row=5, column=0, columnspan=4, padx=10, pady=15)
 
+        # --- 狀態標籤 ---
         self.status_var = tk.StringVar()
         self.status_label = ttk.Label(master, textvariable=self.status_var, font=('Arial', 10, 'italic'))
-        self.status_label.grid(row=4, column=0, columnspan=3, padx=10, pady=5, sticky="w")
+        self.status_label.grid(row=6, column=0, columnspan=4, padx=10, pady=5, sticky="w")
 
-        master.grid_columnconfigure(1, weight=1)
+        master.grid_columnconfigure(1, weight=1) # 讓中間欄位隨視窗縮放
 
     def browse_repo(self):
         path = filedialog.askdirectory(title="選擇 Git 倉儲資料夾")
         if path:
             self.repo_path_var.set(path)
-            self.status_var.set(f"已選擇倉儲路徑: {path}")
+            self.status_var.set(f"已選擇倉儲: {path}")
 
-    def save_as_output(self): # 修改函式以支援 CSV
+    def save_as_output(self):
         path = filedialog.asksaveasfilename(
-            title="儲存檔案",
-            defaultextension=".csv", # 預設副檔名為 .csv
-            filetypes=[("CSV files", "*.csv"), ("Excel files", "*.xlsx"), ("All files", "*.*")] # 同時提供CSV和Excel選項
+            title="儲存 CSV 檔案",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
         )
         if path:
             self.output_file_var.set(path)
-            self.status_var.set(f"檔案將儲存至: {path}")
-
+            self.status_var.set(f"CSV 將儲存至: {path}")
 
     def generate(self):
         repo_path = self.repo_path_var.get()
         output_file = self.output_file_var.get()
         num_commits_str = self.num_commits_var.get()
+        start_date = self.start_date_var.get().strip()
+        end_date = self.end_date_var.get().strip()
 
         if not repo_path:
             messagebox.showwarning("輸入錯誤", "請選擇 Git 倉儲路徑。")
             return
         if not output_file:
-            messagebox.showwarning("輸入錯誤", "請指定輸出的檔案名稱或路徑。")
+            messagebox.showwarning("輸入錯誤", "請指定輸出的 CSV 檔案名稱或路徑。")
             return
 
-        try:
-            num_commits = int(num_commits_str)
-            if num_commits < 0:
-                messagebox.showwarning("輸入錯誤", "擷取筆數不能為負數。")
+        num_commits = 0
+        if num_commits_str.strip(): # 如果使用者有輸入
+            try:
+                num_commits = int(num_commits_str)
+                if num_commits < 0:
+                    messagebox.showwarning("輸入錯誤", "擷取筆數不能為負數。")
+                    return
+            except ValueError:
+                messagebox.showwarning("輸入錯誤", "擷取筆數必須是一個有效的數字。")
                 return
-        except ValueError:
-            messagebox.showwarning("輸入錯誤", "擷取筆數必須是一個有效的數字。")
+
+        # 日期格式驗證 (簡易)
+        valid_dates = True
+        if start_date:
+            try:
+                datetime.strptime(start_date, "%Y-%m-%d")
+            except ValueError:
+                messagebox.showerror("日期格式錯誤", "開始日期格式必須為 YYYY-MM-DD。")
+                valid_dates = False
+        if end_date:
+            try:
+                datetime.strptime(end_date, "%Y-%m-%d")
+            except ValueError:
+                messagebox.showerror("日期格式錯誤", "結束日期格式必須為 YYYY-MM-DD。")
+                valid_dates = False
+        
+        if not valid_dates:
             return
+
+        # 檢查開始日期是否在結束日期之前 (僅當兩者都提供時)
+        if start_date and end_date:
+            try:
+                dt_start_check = datetime.strptime(start_date, "%Y-%m-%d")
+                dt_end_check = datetime.strptime(end_date, "%Y-%m-%d")
+                if dt_start_check > dt_end_check:
+                    messagebox.showwarning("日期錯誤", "開始日期不能晚於結束日期。")
+                    return
+            except ValueError: # 已在上一步驟處理，但以防萬一
+                return
+
 
         self.status_var.set("處理中，請稍候...")
         self.master.update_idletasks()
 
-        # 根據副檔名決定使用哪個函式
-        file_extension = os.path.splitext(output_file)[1].lower()
-        success = False
-
-        if file_extension == ".csv":
-            success = generate_git_log_csv(repo_path, output_file, num_commits if num_commits > 0 else None)
-        elif file_extension == ".xlsx":
-            # 如果仍想支援xlsx，需要確保 openpyxl 已安裝且 generate_git_log_excel 函式存在
-            # 這裡我們假設您會將原始的 generate_git_log_excel 函式也保留在某處
-            # 或者提示使用者安裝 openpyxl
-            try:
-                from openpyxl import Workbook # 僅在此處嘗試導入
-                # 你需要將原始的 generate_git_log_excel 函式複製回程式中
-                # 假設它叫做 generate_git_log_excel_original
-                # success = generate_git_log_excel_original(repo_path, output_file, num_commits if num_commits > 0 else None)
-                messagebox.showinfo("提示", "若要輸出為 .xlsx，請確保您的環境中已安裝 openpyxl 函式庫，\n並在程式碼中包含對應的處理邏輯。\n此範例主要展示CSV輸出。")
-                # 為了範例的簡潔，這裡不直接執行xlsx的生成，你可以複製回原始的xlsx生成函式
-                self.status_var.set("XLSX 生成未在此範例中啟用。")
-                return # 暫時不處理xlsx以保持範例的csv焦點
-            except ImportError:
-                messagebox.showerror("函式庫缺失", "偵測到輸出為 .xlsx 但 openpyxl 函式庫未安裝或未在程式碼中處理。")
-                self.status_var.set("openpyxl 未安裝。")
-                return
-        else:
-            messagebox.showwarning("格式錯誤", "不支援的檔案格式。請選擇 .csv 或 .xlsx。")
-            self.status_var.set("不支援的檔案格式。")
-            return
-
+        success = generate_git_log_csv(
+            repo_path,
+            output_file,
+            num_commits if num_commits > 0 else None, # 傳遞 None 如果筆數為0或空
+            start_date if start_date else None,
+            end_date if end_date else None
+        )
 
         if success:
-            self.status_var.set(f"成功生成檔案: '{os.path.abspath(output_file)}'")
-            messagebox.showinfo("成功", f"檔案已成功生成！\n儲存於: {os.path.abspath(output_file)}")
+            self.status_var.set(f"成功生成 CSV 檔案: '{os.path.abspath(output_file)}'")
+            messagebox.showinfo("成功", f"CSV 檔案已成功生成！\n儲存於: {os.path.abspath(output_file)}")
         else:
-            self.status_var.set("生成失敗，請檢查錯誤訊息。")
+            # 錯誤訊息已由 generate_git_log_csv 中的 messagebox 顯示
+            self.status_var.set("生成失敗或過程中出現問題。")
+
 
 if __name__ == "__main__":
-    # --- 安裝必要的函式庫 ---
-    # 若選擇輸出CSV，則 openpyxl 非必需
-    # pip install GitPython
-    # pip install openpyxl (如果仍想保留XLSX輸出選項)
-
     root = tk.Tk()
     gui = GitLogGUI(root)
     root.mainloop()
