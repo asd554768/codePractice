@@ -42,7 +42,7 @@ class DateInputDialog(tk.Toplevel):
 class BinComparatorApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Bin File 比較工具 - 黑名單過濾版")
+        self.root.title("Bin File 比較工具 - 彈性命名支援版")
         self.root.geometry("800x600")
         
         self.base_bin_dir = 'Bin_Files'
@@ -52,7 +52,7 @@ class BinComparatorApp:
         self.config_file = 'config.ini'
         
         self.setup_directories()
-        self.setup_config() # 初始化設定檔
+        self.setup_config()
         
         self.current_category = tk.StringVar(value=self.sub_dirs[0])
         self.bin1_path = tk.StringVar()
@@ -75,7 +75,6 @@ class BinComparatorApp:
             if not os.path.exists(sub_path):
                 os.makedirs(sub_path)
 
-    # --- 新增：初始化 config.ini ---
     def setup_config(self):
         if not os.path.exists(self.config_file):
             with open(self.config_file, 'w', encoding='utf-8') as f:
@@ -85,9 +84,7 @@ class BinComparatorApp:
                 for sub in self.sub_dirs:
                     f.write(f"{sub} = \n")
 
-    # --- 新增：讀取並解析黑名單 ---
     def get_blacklist(self):
-        """讀取 config.ini 並回傳各分類的黑名單區間 list"""
         blacklist = {sub: [] for sub in self.sub_dirs}
         config = configparser.ConfigParser()
         
@@ -99,15 +96,12 @@ class BinComparatorApp:
                     if not raw_str.strip():
                         continue
                     
-                    # 以逗號切割多組設定
                     parts = raw_str.split(',')
                     for p in parts:
-                        # 透過正則表達式，聰明萃取字串中的兩個數字
                         nums = re.findall(r'\d+', p)
                         if len(nums) >= 2:
                             start_bl = int(nums[0])
                             end_bl = int(nums[1])
-                            # 確保範圍起點小於終點
                             blacklist[sub].append((min(start_bl, end_bl), max(start_bl, end_bl)))
         return blacklist
 
@@ -181,6 +175,7 @@ class BinComparatorApp:
         closest_file = None
         min_diff = None
         for f in file_list:
+            # 取出第一段 (遇到第一個底線前的字串)，這一定是日期
             parts = f.split('_')
             if len(parts) >= 1:
                 date_str = parts[0]
@@ -208,7 +203,7 @@ class BinComparatorApp:
             return
 
         self.clear_results()
-        blacklist = self.get_blacklist() # 每次執行前即時讀取最新黑名單
+        blacklist = self.get_blacklist()
         total_diffs = 0
         error_msgs = []
         file_log = []
@@ -221,9 +216,16 @@ class BinComparatorApp:
                 error_msgs.append(f"[{sub_dir}] 略過：找不到 {sub_dir}.xlsx")
                 continue
 
-            bin_files = [f for f in os.listdir(bin_folder) if f.endswith('.bin')]
+            # --- 核心修改：動態支援隨機字串命名 ---
+            # 只要檔名結尾是「子資料夾名稱.bin」(不區分大小寫)，就抓進來
+            target_suffix = f"{sub_dir.lower()}.bin"
+            bin_files = [
+                f for f in os.listdir(bin_folder) 
+                if f.lower().endswith(target_suffix)
+            ]
+            
             if len(bin_files) < 2:
-                error_msgs.append(f"[{sub_dir}] 略過：資料夾內 Bin 檔案不足 2 個")
+                error_msgs.append(f"[{sub_dir}] 略過：找不到足夠符合 {target_suffix} 結尾的 Bin 檔案")
                 continue
 
             file1 = self.find_closest_file(bin_files, target_dt1)
@@ -242,7 +244,6 @@ class BinComparatorApp:
             bin2_path = os.path.join(bin_folder, file2)
 
             try:
-                # 傳入專屬的 blacklist
                 diffs = self._compare_core(bin1_path, bin2_path, struct_file, sub_dir, blacklist[sub_dir])
                 total_diffs += diffs
             except Exception as e:
@@ -272,7 +273,7 @@ class BinComparatorApp:
             messagebox.showwarning("警告", "請先選擇兩個 Bin 檔案與 Struct 檔案！")
             return
 
-        blacklist = self.get_blacklist() # 每次執行前即時讀取最新黑名單
+        blacklist = self.get_blacklist()
         
         try:
             diff_count = self._compare_core(bin1, bin2, struct_file, current_cat, blacklist[current_cat])
@@ -283,7 +284,6 @@ class BinComparatorApp:
         except Exception as e:
             messagebox.showerror("錯誤", f"發生錯誤：\n{str(e)}")
 
-    # --- 修改點：加入 blacklist 參數，並進行範圍重疊判定 ---
     def _compare_core(self, bin1_path, bin2_path, struct_file, category, current_blacklist):
         df_struct = pd.read_excel(struct_file, header=None)
         
@@ -306,20 +306,17 @@ class BinComparatorApp:
                 continue 
 
             var_name = str(row.iloc[0])
-            var_end_byte = start_byte + length - 1 # 算出變數的結束 Byte
+            var_end_byte = start_byte + length - 1 
 
-            # --- 判斷是否落入黑名單範圍 ---
             is_blacklisted = False
             for bl_start, bl_end in current_blacklist:
-                # 判斷兩條線段是否重疊的經典演算法：max(起點) <= min(終點)
                 if max(start_byte, bl_start) <= min(var_end_byte, bl_end):
                     is_blacklisted = True
                     break
                     
             if is_blacklisted:
-                continue # 若與黑名單重疊，直接略過這個變數不比對！
+                continue 
             
-            # 通過黑名單檢查，算作有效比對變數
             total_vars += 1 
 
             if start_byte >= len(data1) and start_byte >= len(data2):
