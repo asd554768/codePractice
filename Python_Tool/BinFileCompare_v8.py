@@ -6,6 +6,9 @@ from datetime import datetime
 import configparser
 import re
 
+# 僅保留排版所需的 openpyxl 模組 (圖表模組已移除)
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
 class DateInputDialog(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
@@ -42,8 +45,8 @@ class DateInputDialog(tk.Toplevel):
 class BinComparatorApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Bin File 比較工具 - 彈性命名支援版")
-        self.root.geometry("800x600")
+        self.root.title("Bin File 比較工具 - 篩選報表版")
+        self.root.geometry("800x600") 
         
         self.base_bin_dir = 'Bin_Files'
         self.sub_dirs = ['InfoBlock', 'IDPage', 'systeminfo']
@@ -134,15 +137,17 @@ class BinComparatorApp:
         tk.Button(frame_btns, text="清空列表", command=self.clear_results, font=("Arial", 10)).pack(side="left", padx=5)
         tk.Button(frame_btns, text="手動匯出 Excel", command=self.export_excel, bg="#2196F3", fg="white", font=("Arial", 10, "bold")).pack(side="right", padx=5)
 
-        frame_result = tk.LabelFrame(self.root, text="不一致結果", padx=10, pady=10)
+        frame_result = tk.LabelFrame(self.root, text="不一致結果 (逐 Byte 列出)", padx=10, pady=10)
         frame_result.pack(fill="both", expand=True, padx=10, pady=5)
 
-        columns = ("Category", "Variable", "Start Byte", "Length", "Bin 1 Value", "Bin 2 Value")
+        columns = ("Category", "Variable", "Diff Byte Addr", "Bin 1 Value", "Bin 2 Value")
         self.tree = ttk.Treeview(frame_result, columns=columns, show="headings")
         
-        col_widths = {"Category": 80, "Variable": 120, "Start Byte": 80, "Length": 60, "Bin 1 Value": 100, "Bin 2 Value": 100}
+        col_headings = {"Category": "Category", "Variable": "Variable", "Diff Byte Addr": "差異 Byte 位置", "Bin 1 Value": "Bin 1 Value", "Bin 2 Value": "Bin 2 Value"}
+        col_widths = {"Category": 80, "Variable": 120, "Diff Byte Addr": 100, "Bin 1 Value": 100, "Bin 2 Value": 100}
+        
         for col in columns:
-            self.tree.heading(col, text=col)
+            self.tree.heading(col, text=col_headings[col])
             self.tree.column(col, width=col_widths[col], anchor="center")
         
         scrollbar = ttk.Scrollbar(frame_result, orient="vertical", command=self.tree.yview)
@@ -175,7 +180,6 @@ class BinComparatorApp:
         closest_file = None
         min_diff = None
         for f in file_list:
-            # 取出第一段 (遇到第一個底線前的字串)，這一定是日期
             parts = f.split('_')
             if len(parts) >= 1:
                 date_str = parts[0]
@@ -204,7 +208,7 @@ class BinComparatorApp:
 
         self.clear_results()
         blacklist = self.get_blacklist()
-        total_diffs = 0
+        total_mismatch_vars = 0
         error_msgs = []
         file_log = []
 
@@ -216,13 +220,8 @@ class BinComparatorApp:
                 error_msgs.append(f"[{sub_dir}] 略過：找不到 {sub_dir}.xlsx")
                 continue
 
-            # --- 核心修改：動態支援隨機字串命名 ---
-            # 只要檔名結尾是「子資料夾名稱.bin」(不區分大小寫)，就抓進來
             target_suffix = f"{sub_dir.lower()}.bin"
-            bin_files = [
-                f for f in os.listdir(bin_folder) 
-                if f.lower().endswith(target_suffix)
-            ]
+            bin_files = [f for f in os.listdir(bin_folder) if f.lower().endswith(target_suffix)]
             
             if len(bin_files) < 2:
                 error_msgs.append(f"[{sub_dir}] 略過：找不到足夠符合 {target_suffix} 結尾的 Bin 檔案")
@@ -244,14 +243,14 @@ class BinComparatorApp:
             bin2_path = os.path.join(bin_folder, file2)
 
             try:
-                diffs = self._compare_core(bin1_path, bin2_path, struct_file, sub_dir, blacklist[sub_dir])
-                total_diffs += diffs
+                mismatch_vars = self._compare_core(bin1_path, bin2_path, struct_file, sub_dir, blacklist[sub_dir])
+                total_mismatch_vars += mismatch_vars
             except Exception as e:
                 error_msgs.append(f"[{sub_dir}] 發生錯誤：{str(e)}")
 
         exported_file_path = self.export_excel(show_popup=False)
 
-        report_msg = f"智慧掃描比對完成！\n共發現 {total_diffs} 處不一致。\n"
+        report_msg = f"智慧掃描比對完成！\n共發現 {total_mismatch_vars} 個變數含有不一致情形。\n"
         if exported_file_path:
             report_msg += f"\n📁 報表已自動匯出至：\n{exported_file_path}\n"
         
@@ -276,11 +275,11 @@ class BinComparatorApp:
         blacklist = self.get_blacklist()
         
         try:
-            diff_count = self._compare_core(bin1, bin2, struct_file, current_cat, blacklist[current_cat])
-            if diff_count == 0:
+            mismatch_vars = self._compare_core(bin1, bin2, struct_file, current_cat, blacklist[current_cat])
+            if mismatch_vars == 0:
                 messagebox.showinfo("完成", f"[{current_cat}] 區塊比對完成！內容完全一致。")
             else:
-                messagebox.showinfo("完成", f"[{current_cat}] 區塊比對完成！發現 {diff_count} 處不一致。")
+                messagebox.showinfo("完成", f"[{current_cat}] 區塊比對完成！發現 {mismatch_vars} 個變數含有不一致情形。")
         except Exception as e:
             messagebox.showerror("錯誤", f"發生錯誤：\n{str(e)}")
 
@@ -296,7 +295,7 @@ class BinComparatorApp:
         self.used_files[category] = {'bin1': filename1, 'bin2': filename2}
 
         total_vars = 0
-        diff_count = 0
+        mismatch_var_count = 0 
         
         for index, row in df_struct.iterrows():
             try:
@@ -326,17 +325,25 @@ class BinComparatorApp:
             val2 = data2[start_byte : start_byte + length]
 
             if val1 != val2:
-                hex_val1 = " ".join([f"0x{b:02X}" for b in val1]) if val1 else "N/A"
-                hex_val2 = " ".join([f"0x{b:02X}" for b in val2]) if val2 else "N/A"
-
-                record = (category, var_name, start_byte, length, hex_val1, hex_val2)
-                self.compare_results.append(record)
-                self.tree.insert("", "end", values=record)
-                diff_count += 1
+                mismatch_var_count += 1
                 
-        self.comparison_stats[category] = {'total': total_vars, 'diffs': diff_count}
-        return diff_count
+                for i in range(length):
+                    b1 = val1[i] if i < len(val1) else None
+                    b2 = val2[i] if i < len(val2) else None
+                    
+                    if b1 != b2:
+                        diff_addr = start_byte + i 
+                        hex_val1 = f"0x{b1:02X}" if b1 is not None else "N/A"
+                        hex_val2 = f"0x{b2:02X}" if b2 is not None else "N/A"
 
+                        record = (category, var_name, diff_addr, hex_val1, hex_val2)
+                        self.compare_results.append(record)
+                        self.tree.insert("", "end", values=record)
+                
+        self.comparison_stats[category] = {'total': total_vars, 'diffs': mismatch_var_count}
+        return mismatch_var_count
+
+    # --- 核心修改：移除圖表，加入自動篩選 ---
     def export_excel(self, show_popup=True):
         if not self.comparison_stats:
             if show_popup:
@@ -348,18 +355,19 @@ class BinComparatorApp:
             export_path = os.path.join(self.result_dir, f"Comparison_Result_{timestamp}.xlsx")
             
             with pd.ExcelWriter(export_path, engine='openpyxl') as writer:
+                # 1. 寫入資料
                 summary_data = []
                 for cat in self.sub_dirs:
                     if cat in self.comparison_stats:
                         stats = self.comparison_stats[cat]
                         total = stats['total']
-                        diffs = stats['diffs']
-                        pct = (diffs / total * 100) if total > 0 else 0
-                        summary_data.append([cat, total, diffs, f"{pct:.2f}%"])
+                        diffs = stats['diffs'] 
+                        pct = (diffs / total) if total > 0 else 0
+                        summary_data.append([cat, total, diffs, pct])
                     else:
-                        summary_data.append([cat, "未執行", "未執行", "N/A"])
+                        summary_data.append([cat, 0, 0, 0])
                 
-                df_summary = pd.DataFrame(summary_data, columns=["分析區塊", "總變數數", "不一致數量", "不一致百分比"])
+                df_summary = pd.DataFrame(summary_data, columns=["分析區塊", "總變數數", "不一致變數數量", "不一致百分比"])
                 df_summary.to_excel(writer, sheet_name="summary", index=False)
                 
                 for cat in self.sub_dirs:
@@ -375,10 +383,50 @@ class BinComparatorApp:
                     col_f1 = f"{f1_name}_數值"
                     col_f2 = f"{f2_name}_數值"
                     
-                    sheet_data = [[rec[1], rec[2], rec[3], rec[4], rec[5]] for rec in cat_records]
-                    df_cat = pd.DataFrame(sheet_data, columns=["變數名稱", "起始 Byte", "長度", col_f1, col_f2])
+                    sheet_data = [[rec[1], rec[2], rec[3], rec[4]] for rec in cat_records]
+                    df_cat = pd.DataFrame(sheet_data, columns=["變數名稱", "差異 Byte 位置", col_f1, col_f2])
                     df_cat.to_excel(writer, sheet_name=cat, index=False)
+            
+                # 2. 開始美化 Workbook 與加入篩選功能
+                workbook = writer.book
+                
+                header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
+                header_font = Font(color="FFFFFF", bold=True)
+                align_center = Alignment(horizontal="center", vertical="center")
+                thin_border = Border(left=Side(style='thin'), right=Side(style='thin'),
+                                     top=Side(style='thin'), bottom=Side(style='thin'))
+                alt_fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+
+                for sheet_name in workbook.sheetnames:
+                    ws = workbook[sheet_name]
                     
+                    # --- 🌟 神奇魔法：為整個資料範圍加上自動篩選下拉選單 ---
+                    ws.auto_filter.ref = ws.dimensions
+                    
+                    for col in ws.columns:
+                        max_length = 0
+                        column_letter = col[0].column_letter
+                        for cell in col:
+                            cell.alignment = align_center
+                            cell.border = thin_border
+                            
+                            if cell.row == 1:
+                                cell.fill = header_fill
+                                cell.font = header_font
+                            elif cell.row % 2 == 0:
+                                cell.fill = alt_fill
+                                
+                            if sheet_name == "summary" and cell.column == 4 and cell.row > 1:
+                                cell.number_format = '0.00%'
+
+                            try:
+                                if len(str(cell.value)) > max_length:
+                                    max_length = len(str(cell.value))
+                            except:
+                                pass
+                        
+                        ws.column_dimensions[column_letter].width = max_length + 6
+
             if show_popup:
                 messagebox.showinfo("匯出成功", f"多工作表報表已成功儲存至：\n{export_path}")
             return export_path
