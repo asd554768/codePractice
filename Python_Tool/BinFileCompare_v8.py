@@ -6,26 +6,27 @@ from datetime import datetime
 import configparser
 import re
 
-# 僅保留排版所需的 openpyxl 模組 (圖表模組已移除)
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 class DateInputDialog(tk.Toplevel):
-    def __init__(self, parent):
+    # --- 修改點 1：接收傳入的預設日期 ---
+    def __init__(self, parent, default_d1, default_d2):
         super().__init__(parent)
         self.title("設定比對日期")
         self.geometry("320x180")
         self.result = None
         
-        tk.Label(self, text="請輸入 Bin File 1 目標日期\n(格式 YYMMDD，例如: 260315):", pady=5).pack()
+        tk.Label(self, text="請輸入 Bin File 1 目標日期 (較舊)\n(格式 YYMMDD，例如: 260315):", pady=5).pack()
         self.date1_entry = tk.Entry(self, justify="center")
         self.date1_entry.pack()
         
-        tk.Label(self, text="請輸入 Bin File 2 目標日期\n(格式 YYMMDD，例如: 260316):", pady=5).pack()
+        tk.Label(self, text="請輸入 Bin File 2 目標日期 (較新)\n(格式 YYMMDD，例如: 260316):", pady=5).pack()
         self.date2_entry = tk.Entry(self, justify="center")
         self.date2_entry.pack()
         
-        self.date1_entry.insert(0, "260315")
-        self.date2_entry.insert(0, "260316")
+        # 填入自動計算出的預設日期
+        self.date1_entry.insert(0, default_d1)
+        self.date2_entry.insert(0, default_d2)
         
         tk.Button(self, text="確定搜尋", command=self.on_ok, bg="#4CAF50", fg="white", width=15).pack(pady=10)
         
@@ -45,7 +46,7 @@ class DateInputDialog(tk.Toplevel):
 class BinComparatorApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Bin File 比較工具 - 篩選報表版")
+        self.root.title("Bin File 比較工具 - 智慧日期預填版")
         self.root.geometry("800x600") 
         
         self.base_bin_dir = 'Bin_Files'
@@ -176,6 +177,43 @@ class BinComparatorApp:
         self.used_files.clear()
         self.comparison_stats.clear()
 
+    # --- 新增點 2：掃描資料夾，找出最新的兩個日期 ---
+    def get_latest_two_dates(self):
+        unique_dates = set()
+        
+        for sub_dir in self.sub_dirs:
+            bin_folder = os.path.join(self.base_bin_dir, sub_dir)
+            if not os.path.exists(bin_folder):
+                continue
+                
+            target_suffix = f"{sub_dir.lower()}.bin"
+            try:
+                for f in os.listdir(bin_folder):
+                    if f.lower().endswith(target_suffix):
+                        parts = f.split('_')
+                        if len(parts) >= 1:
+                            date_str = parts[0]
+                            # 驗證是否為合法日期
+                            try:
+                                datetime.strptime(date_str, "%y%m%d")
+                                unique_dates.add(date_str)
+                            except ValueError:
+                                pass
+            except Exception:
+                pass
+                
+        # 排序日期 (由大到小，即由新到舊)
+        sorted_dates = sorted(list(unique_dates), reverse=True)
+        
+        if len(sorted_dates) >= 2:
+            # 回傳：較舊的(次新), 較新的(最新)
+            return sorted_dates[1], sorted_dates[0]
+        elif len(sorted_dates) == 1:
+            return sorted_dates[0], sorted_dates[0]
+        else:
+            # 如果都沒找到檔案，給個預設值
+            return "260315", "260316"
+
     def find_closest_file(self, file_list, target_dt):
         closest_file = None
         min_diff = None
@@ -194,7 +232,10 @@ class BinComparatorApp:
         return closest_file
 
     def auto_compare_all(self):
-        dialog = DateInputDialog(self.root)
+        # --- 修改點 3：取得最新日期並傳給 Dialog ---
+        d1_default, d2_default = self.get_latest_two_dates()
+        dialog = DateInputDialog(self.root, d1_default, d2_default)
+        
         if not dialog.result:
             return
             
@@ -343,7 +384,6 @@ class BinComparatorApp:
         self.comparison_stats[category] = {'total': total_vars, 'diffs': mismatch_var_count}
         return mismatch_var_count
 
-    # --- 核心修改：移除圖表，加入自動篩選 ---
     def export_excel(self, show_popup=True):
         if not self.comparison_stats:
             if show_popup:
@@ -355,7 +395,6 @@ class BinComparatorApp:
             export_path = os.path.join(self.result_dir, f"Comparison_Result_{timestamp}.xlsx")
             
             with pd.ExcelWriter(export_path, engine='openpyxl') as writer:
-                # 1. 寫入資料
                 summary_data = []
                 for cat in self.sub_dirs:
                     if cat in self.comparison_stats:
@@ -387,7 +426,6 @@ class BinComparatorApp:
                     df_cat = pd.DataFrame(sheet_data, columns=["變數名稱", "差異 Byte 位置", col_f1, col_f2])
                     df_cat.to_excel(writer, sheet_name=cat, index=False)
             
-                # 2. 開始美化 Workbook 與加入篩選功能
                 workbook = writer.book
                 
                 header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
@@ -400,7 +438,6 @@ class BinComparatorApp:
                 for sheet_name in workbook.sheetnames:
                     ws = workbook[sheet_name]
                     
-                    # --- 🌟 神奇魔法：為整個資料範圍加上自動篩選下拉選單 ---
                     ws.auto_filter.ref = ws.dimensions
                     
                     for col in ws.columns:
