@@ -109,7 +109,7 @@ class ScsiToolGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Python Storage Debug Tool (Multi-Tab Edition)")
-        self.root.geometry("900x850")
+        self.root.geometry("1000x850") # 加寬一點以容納新按鈕
         
         self.create_global_header()
         
@@ -120,7 +120,7 @@ class ScsiToolGUI:
         self.tab2 = ttk.Frame(self.notebook)
         
         self.notebook.add(self.tab1, text=" SCSI Command (16-Byte) ")
-        self.notebook.add(self.tab2, text=" Vendor/Ext Command (64-Byte) ")
+        self.notebook.add(self.tab2, text=" Vendor/Ext Command (64-Byte VUC) ")
         
         self.init_tab1_scsi()
         self.init_tab2_64byte()
@@ -135,7 +135,7 @@ class ScsiToolGUI:
         self.drive_combo.pack(side=tk.LEFT, padx=10)
 
     # ==========================================
-    # Tab 1: 原本的 16-Byte SCSI 工具 (省略部分細節，保持原樣)
+    # Tab 1: 原本的 16-Byte SCSI 工具 
     # ==========================================
     def init_tab1_scsi(self):
         self.t1_dir_var = tk.IntVar(value=SCSI_IOCTL_DATA_IN)
@@ -194,6 +194,7 @@ class ScsiToolGUI:
         self.t1_out.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb.config(command=self.t1_out.yview)
 
+    # Tab 1 Methods 
     def t1_auto_focus(self, ev, idx):
         if len(self.t1_cdb_entries[idx].get()) >= 2 and idx < 15:
             self.t1_cdb_entries[idx+1].focus_set()
@@ -239,20 +240,19 @@ class ScsiToolGUI:
         except Exception as e: self.t1_log(f"Error: {e}")
 
     # ==========================================
-    # Tab 2: 全新 64-Byte 工具區塊
+    # Tab 2: VUC 64-Byte 工具區塊
     # ==========================================
     def init_tab2_64byte(self):
         self.t2_dir_var = tk.IntVar(value=SCSI_IOCTL_DATA_IN)
         self.t2_entries = []
-        # 將 AP_KEY 預設改為打勾 (True)
-        self.t2_ap_key_var = tk.BooleanVar(value=True)
+        self.t2_ap_key_var = tk.BooleanVar(value=True) # 預設打勾
         self.t2_last_in_data = None
-        self.t2_loaded_data_bin = None
+        self.t2_loaded_data_bin = None # 用於 VUC 第二道 Cmd (Data-Out)
 
         ctrl_frame = tk.Frame(self.tab2, pady=10)
         ctrl_frame.pack(fill=tk.X, padx=10)
 
-        tk.Checkbutton(ctrl_frame, text="AP_KEY (啟用特權解鎖)", variable=self.t2_ap_key_var, font=("Arial", 10, "bold"), fg="#D32F2F").pack(side=tk.LEFT, padx=10)
+        tk.Checkbutton(ctrl_frame, text="AP_KEY (解鎖)", variable=self.t2_ap_key_var, font=("Arial", 10, "bold"), fg="#D32F2F").pack(side=tk.LEFT, padx=10)
         
         ttk.Separator(ctrl_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
         tk.Radiobutton(ctrl_frame, text="Data In", variable=self.t2_dir_var, value=SCSI_IOCTL_DATA_IN).pack(side=tk.LEFT)
@@ -265,7 +265,12 @@ class ScsiToolGUI:
         self.t2_len_entry.insert(0, "0")
         self.t2_len_entry.pack(side=tk.LEFT, padx=5)
 
-        grid_frame = tk.LabelFrame(self.tab2, text="Command Bytes (64-Byte Payload / CDB)", padx=10, pady=10)
+        # 新增：用於 VUC Data-Out 階段的 Payload 載入按鈕
+        tk.Button(ctrl_frame, text="載入 Data Out .bin", command=self.t2_load_data_file).pack(side=tk.LEFT, padx=5)
+        self.t2_data_lbl = tk.Label(ctrl_frame, text="", fg="gray")
+        self.t2_data_lbl.pack(side=tk.LEFT)
+
+        grid_frame = tk.LabelFrame(self.tab2, text="Command Bytes (64-Byte Payload / VUC)", padx=10, pady=10)
         grid_frame.pack(fill=tk.X, padx=10, pady=5)
 
         btn_box = tk.Frame(grid_frame)
@@ -291,7 +296,7 @@ class ScsiToolGUI:
 
         act_f = tk.Frame(self.tab2, padx=10, pady=5)
         act_f.pack(fill=tk.X)
-        tk.Button(act_f, text="EXECUTE 64-BYTE COMMAND", command=self.t2_execute, bg="#1976D2", fg="white", font=("Arial", 11, "bold"), width=30).pack(side=tk.LEFT)
+        tk.Button(act_f, text="EXECUTE 64-BYTE VUC", command=self.t2_execute, bg="#1976D2", fg="white", font=("Arial", 11, "bold"), width=30).pack(side=tk.LEFT)
         tk.Button(act_f, text="儲存 Data In (.bin)", command=self.t2_save_data, bg="#FF9800", fg="white", font=("Arial", 10, "bold")).pack(side=tk.RIGHT)
 
         out_f = tk.Frame(self.tab2, padx=10, pady=5)
@@ -313,8 +318,7 @@ class ScsiToolGUI:
 
     def t2_clear_grid(self):
         for e in self.t2_entries:
-            e.delete(0, tk.END)
-            e.insert(0, "00")
+            e.delete(0, tk.END); e.insert(0, "00")
 
     def t2_load_64b_bin(self):
         path = filedialog.askopenfilename(title="選擇 64-Byte Bin 檔案")
@@ -334,10 +338,18 @@ class ScsiToolGUI:
                         self.t2_len_entry.insert(0, str(transfer_length))
                         self.t2_log(f"[Auto-Parse] 從 Offset 40-43 擷取長度並乘以 4: {transfer_length} Bytes")
 
+    def t2_load_data_file(self):
+        path = filedialog.askopenfilename(title="選擇 Data Out Bin 檔案")
+        if path:
+            with open(path, "rb") as f: self.t2_loaded_data_bin = f.read()
+            self.t2_data_lbl.config(text=f"已載入: {os.path.basename(path)}", fg="green")
+            self.t2_len_entry.delete(0, tk.END)
+            self.t2_len_entry.insert(0, str(len(self.t2_loaded_data_bin)))
+            self.t2_dir_var.set(SCSI_IOCTL_DATA_OUT)
+
     def t2_save_data(self):
         if not self.t2_last_in_data:
-            messagebox.showwarning("無法儲存", "目前沒有可用的 Data In 資料！")
-            return
+            return messagebox.showwarning("無法儲存", "目前沒有可用的 Data In 資料！")
         path = filedialog.asksaveasfilename(defaultextension=".bin")
         if path:
             with open(path, "wb") as f: f.write(self.t2_last_in_data)
@@ -350,6 +362,7 @@ class ScsiToolGUI:
         try:
             drive_num = int(self.drive_combo.get().split(" ")[0].replace("PhysicalDrive", ""))
             
+            # 收集 64-Byte 矩陣作為 VUC Payload
             cmd_64_bytes = []
             for entry in self.t2_entries:
                 val = entry.get().strip()
@@ -360,15 +373,15 @@ class ScsiToolGUI:
             ap_key_enabled = self.t2_ap_key_var.get()
 
             # ==========================================
-            # AP_KEY 解鎖序列實作
+            # 1. AP_KEY 解鎖序列 (若啟用)
             # ==========================================
             if ap_key_enabled:
                 self.t2_log("==========================================")
-                self.t2_log("[AP_KEY Auth] 開始執行特權解鎖序列...")
+                self.t2_log("[AP_KEY Auth] 開始執行特權解鎖序列 (3 cmds)...")
                 
                 ap_key_path = os.path.join("AP_Key", "ap_key.bin")
                 if not os.path.exists(ap_key_path):
-                    self.t2_log(f"[Error] 找不到金鑰檔案！請確保工具同目錄下有: {ap_key_path}")
+                    self.t2_log(f"[Error] 找不到金鑰檔案！請確保路徑正確: {ap_key_path}")
                     self.t2_log("=> 中止執行！請取消勾選 AP_KEY 或補齊檔案。")
                     return
                 
@@ -379,51 +392,91 @@ class ScsiToolGUI:
 
                 # Step 1: Data-Out
                 cdb1 = [0x06, 0xfe, 0xc0, 0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-                self.t2_log(" -> [1/3] 發送 Data-Out (Length: 512, Payload: ap_key.bin)")
+                self.t2_log(" -> [AP_KEY 1/3] 發送 Data-Out (Length: 512, Payload: ap_key.bin)")
                 st1, _, _ = send_scsi_command(drive_num, cdb1, 512, SCSI_IOCTL_DATA_OUT, list(ap_key_data))
-                if st1 != 0:
-                    self.t2_log(f"   [Error] 序列 1 失敗！Status: 0x{st1:02X}")
-                    return
+                if st1 != 0: return self.t2_log(f"   [Error] 序列 1 失敗！Status: 0x{st1:02X}")
 
                 # Step 2: No-Data
                 cdb2 = [0x06, 0xfe, 0xc1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-                self.t2_log(" -> [2/3] 發送 No-Data (Length: 0)")
+                self.t2_log(" -> [AP_KEY 2/3] 發送 No-Data (Length: 0)")
                 st2, _, _ = send_scsi_command(drive_num, cdb2, 0, SCSI_IOCTL_DATA_UNSPECIFIED, None)
-                if st2 != 0:
-                    self.t2_log(f"   [Error] 序列 2 失敗！Status: 0x{st2:02X}")
-                    return
+                if st2 != 0: return self.t2_log(f"   [Error] 序列 2 失敗！Status: 0x{st2:02X}")
 
                 # Step 3: Data-In
                 cdb3 = [0x06, 0xfe, 0xc3, 0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-                self.t2_log(" -> [3/3] 發送 Data-In (Length: 512)")
+                self.t2_log(" -> [AP_KEY 3/3] 發送 Data-In (Length: 512)")
                 st3, _, _ = send_scsi_command(drive_num, cdb3, 512, SCSI_IOCTL_DATA_IN, None)
-                if st3 != 0:
-                    self.t2_log(f"   [Error] 序列 3 失敗！Status: 0x{st3:02X}")
-                    return
+                if st3 != 0: return self.t2_log(f"   [Error] 序列 3 失敗！Status: 0x{st3:02X}")
 
-                self.t2_log("[AP_KEY Auth] 解鎖序列執行完畢，裝置進入特權模式！")
+                self.t2_log("[AP_KEY Auth] 解鎖成功，硬碟進入特權模式！")
                 self.t2_log("==========================================\n")
             
             # ==========================================
-            # 64-Byte 主體指令 (模擬/等待實作區)
+            # 2. VUC 主體指令序列 (3 cmds)
             # ==========================================
-            dir_str = "DATA IN" if direction == SCSI_IOCTL_DATA_IN else "DATA OUT" if direction == SCSI_IOCTL_DATA_OUT else "NO DATA"
-            self.t2_log(f">>> 執行主指令目標: {self.drive_combo.get()}")
-            self.t2_log(f">>> 傳輸方向: {dir_str} | 長度: {length} Bytes")
-            self.t2_log(">>> 收集到的 64-Byte Payload (Hex):")
-            self.t2_log(hexdump(bytes(cmd_64_bytes), 16))
+            self.t2_log("==========================================")
+            self.t2_log(f"[VUC Sequence] 開始發送 64-Byte VUC (3 cmds)...")
             
-            self.t2_log("\n[等待實作] 主指令參數已收集完畢。請在此處串接對應的 64-byte 底層 API...")
+            # [VUC Cmd 1] 寫入 64-Byte 矩陣設定 (固定 Data-Out, Length: 64)
+            vuc_cdb1 = [0x06, 0xfe, 0xc0, 0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+            self.t2_log(f" -> [VUC 1/3] 發送 64-Byte 矩陣 Payload (Data-Out)")
+            st_vuc1, _, _ = send_scsi_command(drive_num, vuc_cdb1, 64, SCSI_IOCTL_DATA_OUT, cmd_64_bytes)
+            if st_vuc1 != 0: return self.t2_log(f"   [Error] VUC 1 失敗！Status: 0x{st_vuc1:02X}")
+
+            # [VUC Cmd 2] 執行資料傳輸 (動態 OpCode 與 Sector 計算)
+            sectors = length // 512 if length > 0 else 0
+            b3 = (sectors >> 8) & 0xFF
+            b4 = sectors & 0xFF
             
-            # 模擬 Data In 接收 (供你測試介面儲存功能)
-            if direction == SCSI_IOCTL_DATA_IN and length > 0:
-                dummy_data = bytes([0xAA, 0xBB, 0xCC, 0xDD] * (length // 4 + 1))[:length]
-                self.t2_last_in_data = dummy_data
-                self.t2_log("\n--- (模擬) 64-Byte 指令 Data In 接收結果 ---")
-                self.t2_log(hexdump(dummy_data))
+            # 依據傳輸方向決定 Byte_2 (OpCode)
+            if direction == SCSI_IOCTL_DATA_IN:
+                b2 = 0xc2
+            else:
+                b2 = 0xc1 # Data-Out 或 No-Data
                 
+            # CDB 建構 (採用 Byte_7 = 0x10)
+            vuc_cdb2 = [0x06, 0xfe, b2, b3, b4, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+            
+            dir_str2 = "DATA IN" if direction == SCSI_IOCTL_DATA_IN else "DATA OUT" if direction == SCSI_IOCTL_DATA_OUT else "NO DATA"
+            self.t2_log(f" -> [VUC 2/3] 發送 {dir_str2}")
+            self.t2_log(f"    (OpCode: 0x{b2:02X}, Sectors: 0x{sectors:04X} -> Byte3: 0x{b3:02X}, Byte4: 0x{b4:02X})")
+            
+            # 若為 Data-Out，準備來自檔案的 Payload
+            out_b = None
+            if direction == SCSI_IOCTL_DATA_OUT:
+                out_b = list(self.t2_loaded_data_bin) if self.t2_loaded_data_bin else [0]*length
+                if len(out_b) < length: out_b += [0]*(length-len(out_b))
+                out_b = out_b[:length]
+
+            # 執行 VUC Cmd 2
+            st_vuc2, data_vuc2, _ = send_scsi_command(drive_num, vuc_cdb2, length, direction, out_b)
+            if st_vuc2 != 0: return self.t2_log(f"   [Error] VUC 2 失敗！Status: 0x{st_vuc2:02X}")
+            
+            # 顯示 Data-In 或 Data-Out 結果
+            if direction == SCSI_IOCTL_DATA_IN and length > 0:
+                self.t2_last_in_data = data_vuc2 # 暫存供存檔
+                self.t2_log("\n--- VUC 2 Data-In 接收結果 ---")
+                self.t2_log(hexdump(data_vuc2))
+                self.t2_log("--------------------------------\n")
+            elif direction == SCSI_IOCTL_DATA_OUT:
+                self.t2_log("    (Data-Out 傳輸成功)\n")
+            elif direction == SCSI_IOCTL_DATA_UNSPECIFIED:
+                self.t2_log("    (No-Data 傳輸成功)\n")
+
+            # [VUC Cmd 3] 讀取狀態
+            vuc_cdb3 = [0x06, 0xfe, 0xc3, 0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+            self.t2_log(f" -> [VUC 3/3] 讀取執行狀態 (Data-In, Length: 512)")
+            st_vuc3, data_vuc3, _ = send_scsi_command(drive_num, vuc_cdb3, 512, SCSI_IOCTL_DATA_IN, None)
+            if st_vuc3 != 0: return self.t2_log(f"   [Error] VUC 3 失敗！Status: 0x{st_vuc3:02X}")
+            
+            self.t2_log("\n--- VUC 3 狀態回報 ---")
+            self.t2_log(hexdump(data_vuc3))
+            
+            self.t2_log("\n[VUC Sequence] 全部指令序列執行成功！")
+            self.t2_log("==========================================")
+
         except Exception as e:
-            self.t2_log(f"[Error] {str(e)}")
+            self.t2_log(f"[Exception] 發生未預期錯誤: {str(e)}")
 
 if __name__ == "__main__":
     if ctypes.windll.shell32.IsUserAnAdmin():
