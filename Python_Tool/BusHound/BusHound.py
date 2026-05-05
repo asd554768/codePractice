@@ -17,7 +17,7 @@ FILE_SHARE_WRITE = 2
 IOCTL_SCSI_PASS_THROUGH_DIRECT = 0x4D014
 SCSI_IOCTL_DATA_OUT = 0
 SCSI_IOCTL_DATA_IN = 1
-SCSI_IOCTL_DATA_UNSPECIFIED = 2  # 新增：無資料傳輸 (No-Data)
+SCSI_IOCTL_DATA_UNSPECIFIED = 2
 
 class SCSI_PASS_THROUGH_DIRECT(ctypes.Structure):
     _fields_ = [
@@ -67,10 +67,9 @@ def send_scsi_command(physical_drive_num, cdb_bytes, data_transfer_length, direc
 
     sense_buffer = SENSE_DATA_BUFFER()
     
-    # 根據傳輸方向配置 Buffer
     if direction == SCSI_IOCTL_DATA_UNSPECIFIED:
         data_transfer_length = 0
-        data_buffer = None # No-Data 模式不需要 Buffer
+        data_buffer = None
     elif direction == SCSI_IOCTL_DATA_OUT and out_data_bytes:
         data_buffer = (ctypes.c_ubyte * data_transfer_length)(*(out_data_bytes[:data_transfer_length]))
     else:
@@ -86,7 +85,6 @@ def send_scsi_command(physical_drive_num, cdb_bytes, data_transfer_length, direc
     combined.sptd.DataTransferLength = data_transfer_length
     combined.sptd.TimeOutValue = 10 
     
-    # 如果長度大於 0 才掛載記憶體指標，否則設為 NULL
     if data_transfer_length > 0 and data_buffer is not None:
         combined.sptd.DataBuffer = ctypes.cast(ctypes.pointer(data_buffer), ctypes.c_void_p)
     else:
@@ -114,9 +112,15 @@ class ScsiToolGUI:
         self.root = root
         self.root.title("Python SCSI Cmd Tool (Enterprise Edition)")
         self.root.geometry("850x850")
+        
+        # 狀態變數
         self.dir_var = tk.IntVar(value=SCSI_IOCTL_DATA_IN)
         self.loaded_data_bin = None
         self.cdb_entries = []
+        
+        # 新增：用來暫存最後一次成功收到的 Data In 資料
+        self.last_in_data = None 
+        
         self.create_widgets()
 
     def create_widgets(self):
@@ -127,7 +131,6 @@ class ScsiToolGUI:
         if self.drive_combo['values']: self.drive_combo.current(0)
         self.drive_combo.pack(side=tk.TOP, anchor=tk.W, pady=5)
 
-        # 新增 No Data 選項
         tk.Radiobutton(cfg_frame, text="Data In (讀取)", variable=self.dir_var, value=SCSI_IOCTL_DATA_IN).pack(side=tk.LEFT)
         tk.Radiobutton(cfg_frame, text="Data Out (寫入)", variable=self.dir_var, value=SCSI_IOCTL_DATA_OUT).pack(side=tk.LEFT, padx=20)
         tk.Radiobutton(cfg_frame, text="No Data (無傳輸)", variable=self.dir_var, value=SCSI_IOCTL_DATA_UNSPECIFIED).pack(side=tk.LEFT)
@@ -158,7 +161,7 @@ class ScsiToolGUI:
             self.cdb_entries.append(entry)
 
         # 3. Data Buffer 設定
-        buf_frame = tk.LabelFrame(self.root, text="Step 3: Data Buffer", padx=10, pady=10)
+        buf_frame = tk.LabelFrame(self.root, text="Step 3: Data Buffer (Data Out 來源 / Data In 長度)", padx=10, pady=10)
         buf_frame.pack(fill=tk.X, padx=10, pady=5)
         
         tk.Label(buf_frame, text="傳輸長度 (Bytes):").pack(side=tk.LEFT)
@@ -166,15 +169,23 @@ class ScsiToolGUI:
         self.len_entry.insert(0, "36")
         self.len_entry.pack(side=tk.LEFT, padx=5)
 
-        tk.Button(buf_frame, text="載入 Data Bin", command=self.on_load_data_file).pack(side=tk.LEFT, padx=10)
+        tk.Button(buf_frame, text="載入 Data Out .bin", command=self.on_load_data_file).pack(side=tk.LEFT, padx=10)
         self.data_file_label = tk.Label(buf_frame, text="未選擇檔案", fg="gray")
         self.data_file_label.pack(side=tk.LEFT)
 
-        # 4. 執行與輸出
-        self.send_btn = tk.Button(self.root, text="EXECUTE SCSI COMMAND", command=self.on_send, 
-                                  bg="#2E7D32", fg="white", font=("Arial", 12, "bold"), pady=10)
-        self.send_btn.pack(fill=tk.X, padx=10, pady=10)
+        # 4. 執行與結果匯出 (新增匯出按鈕區塊)
+        action_frame = tk.Frame(self.root, padx=10, pady=5)
+        action_frame.pack(fill=tk.X)
 
+        self.send_btn = tk.Button(action_frame, text="EXECUTE SCSI COMMAND", command=self.on_send, 
+                                  bg="#2E7D32", fg="white", font=("Arial", 12, "bold"), pady=8, width=30)
+        self.send_btn.pack(side=tk.LEFT, padx=5)
+
+        self.save_btn = tk.Button(action_frame, text="儲存 Data In 至 .bin", command=self.on_save_data_in, 
+                                  bg="#FF9800", fg="white", font=("Arial", 10, "bold"), pady=8)
+        self.save_btn.pack(side=tk.RIGHT, padx=5)
+
+        # 5. 輸出顯示區
         out_frame = tk.Frame(self.root)
         out_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         self.scrollbar = tk.Scrollbar(out_frame)
@@ -222,8 +233,31 @@ class ScsiToolGUI:
             self.len_entry.insert(0, str(len(self.loaded_data_bin)))
             self.dir_var.set(SCSI_IOCTL_DATA_OUT)
 
+    # --- 新增：儲存 Data In 的邏輯 ---
+    def on_save_data_in(self):
+        if not self.last_in_data:
+            messagebox.showwarning("無法儲存", "目前沒有可用的 Data In 資料！\n請先執行一次成功的 Data In (讀取) 指令。")
+            return
+            
+        path = filedialog.asksaveasfilename(
+            title="儲存 Data In 結果",
+            defaultextension=".bin",
+            filetypes=[("Binary files", "*.bin"), ("All files", "*.*")]
+        )
+        if path:
+            try:
+                with open(path, "wb") as f:
+                    f.write(self.last_in_data)
+                self.log(f"\n[系統提示] 成功將 {len(self.last_in_data)} Bytes 儲存至:")
+                self.log(f"-> {path}")
+            except Exception as e:
+                self.log(f"\n[系統錯誤] 儲存檔案失敗: {e}")
+
     def on_send(self):
         self.output_text.delete(1.0, tk.END)
+        # 每次發送新指令前，先清空上一次的暫存資料，避免使用者存錯
+        self.last_in_data = None 
+        
         try:
             drive_num = int(self.drive_combo.get().split(" ")[0].replace("PhysicalDrive", ""))
             
@@ -232,12 +266,10 @@ class ScsiToolGUI:
                 val = entry.get().strip()
                 cdb_bytes.append(int(val if val else "00", 16))
             
-            # 安全取得長度，若是空白則當作 0
             len_str = self.len_entry.get().strip()
             length = int(len_str) if len_str else 0
             direction = self.dir_var.get()
             
-            # 如果是 No-Data，強制忽略外部設定的長度並設為 0
             if direction == SCSI_IOCTL_DATA_UNSPECIFIED:
                 length = 0
             
@@ -257,6 +289,9 @@ class ScsiToolGUI:
                 self.log(f"Sense Key Error: {' '.join([f'{b:02x}' for b in sense])}")
                 
             if direction == SCSI_IOCTL_DATA_IN and length > 0: 
+                # 如果是 Data In 且有收到資料，將其暫存起來供存檔按鈕使用
+                if status == 0:
+                    self.last_in_data = data
                 self.log(hexdump(data))
             elif direction == SCSI_IOCTL_DATA_OUT: 
                 self.log("--- Data Out 完成 ---")
