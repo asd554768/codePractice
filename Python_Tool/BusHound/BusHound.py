@@ -111,21 +111,17 @@ class ScsiToolGUI:
         self.root.title("Python Storage Debug Tool (Multi-Tab Edition)")
         self.root.geometry("900x850")
         
-        # 建立共用的頂部控制區 (選擇磁碟)
         self.create_global_header()
         
-        # 建立 Notebook 分頁系統
         self.notebook = ttk.Notebook(self.root)
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
-        # 建立兩個分頁
         self.tab1 = ttk.Frame(self.notebook)
         self.tab2 = ttk.Frame(self.notebook)
         
         self.notebook.add(self.tab1, text=" SCSI Command (16-Byte) ")
         self.notebook.add(self.tab2, text=" Vendor/Ext Command (64-Byte) ")
         
-        # 初始化兩個分頁的內容
         self.init_tab1_scsi()
         self.init_tab2_64byte()
 
@@ -139,7 +135,7 @@ class ScsiToolGUI:
         self.drive_combo.pack(side=tk.LEFT, padx=10)
 
     # ==========================================
-    # Tab 1: 原本的 16-Byte SCSI 工具
+    # Tab 1: 原本的 16-Byte SCSI 工具 (省略部分細節，保持原樣)
     # ==========================================
     def init_tab1_scsi(self):
         self.t1_dir_var = tk.IntVar(value=SCSI_IOCTL_DATA_IN)
@@ -147,7 +143,6 @@ class ScsiToolGUI:
         self.t1_cdb_entries = []
         self.t1_last_in_data = None
 
-        # 方向與 CDB 區域
         cfg_frame = tk.Frame(self.tab1, pady=5)
         cfg_frame.pack(fill=tk.X)
         
@@ -176,7 +171,6 @@ class ScsiToolGUI:
             e.bind('<KeyRelease>', lambda ev, idx=i: self.t1_auto_focus(ev, idx))
             self.t1_cdb_entries.append(e)
 
-        # Buffer 區域
         buf_frame = tk.LabelFrame(self.tab1, text="Data Buffer", padx=10, pady=5)
         buf_frame.pack(fill=tk.X, pady=5)
         tk.Label(buf_frame, text="傳輸長度 (Bytes):").pack(side=tk.LEFT)
@@ -187,7 +181,6 @@ class ScsiToolGUI:
         self.t1_data_lbl = tk.Label(buf_frame, text="未選擇檔案", fg="gray")
         self.t1_data_lbl.pack(side=tk.LEFT)
 
-        # 執行與輸出
         act_f = tk.Frame(self.tab1, pady=5)
         act_f.pack(fill=tk.X)
         tk.Button(act_f, text="EXECUTE SCSI CMD", command=self.t1_execute, bg="#2E7D32", fg="white", font=("Arial", 11, "bold"), width=25).pack(side=tk.LEFT)
@@ -201,7 +194,6 @@ class ScsiToolGUI:
         self.t1_out.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb.config(command=self.t1_out.yview)
 
-    # Tab 1 Methods (簡化保留，維持功能)
     def t1_auto_focus(self, ev, idx):
         if len(self.t1_cdb_entries[idx].get()) >= 2 and idx < 15:
             self.t1_cdb_entries[idx+1].focus_set()
@@ -252,31 +244,27 @@ class ScsiToolGUI:
     def init_tab2_64byte(self):
         self.t2_dir_var = tk.IntVar(value=SCSI_IOCTL_DATA_IN)
         self.t2_entries = []
-        self.t2_ap_key_var = tk.BooleanVar(value=False)
+        # 將 AP_KEY 預設改為打勾 (True)
+        self.t2_ap_key_var = tk.BooleanVar(value=True)
         self.t2_last_in_data = None
         self.t2_loaded_data_bin = None
 
-        # 頂部控制列 (AP_KEY, 方向, 長度)
         ctrl_frame = tk.Frame(self.tab2, pady=10)
         ctrl_frame.pack(fill=tk.X, padx=10)
 
-        # 1. AP_KEY Checkbox
-        tk.Checkbutton(ctrl_frame, text="AP_KEY (啟用特權)", variable=self.t2_ap_key_var, font=("Arial", 10, "bold"), fg="#D32F2F").pack(side=tk.LEFT, padx=10)
+        tk.Checkbutton(ctrl_frame, text="AP_KEY (啟用特權解鎖)", variable=self.t2_ap_key_var, font=("Arial", 10, "bold"), fg="#D32F2F").pack(side=tk.LEFT, padx=10)
         
-        # 2. 傳輸方向
         ttk.Separator(ctrl_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
         tk.Radiobutton(ctrl_frame, text="Data In", variable=self.t2_dir_var, value=SCSI_IOCTL_DATA_IN).pack(side=tk.LEFT)
         tk.Radiobutton(ctrl_frame, text="Data Out", variable=self.t2_dir_var, value=SCSI_IOCTL_DATA_OUT).pack(side=tk.LEFT)
         tk.Radiobutton(ctrl_frame, text="No Data", variable=self.t2_dir_var, value=SCSI_IOCTL_DATA_UNSPECIFIED).pack(side=tk.LEFT)
         
-        # 3. 傳輸長度
         ttk.Separator(ctrl_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
-        tk.Label(ctrl_frame, text="Length:").pack(side=tk.LEFT)
-        self.t2_len_entry = tk.Entry(ctrl_frame, width=10)
+        tk.Label(ctrl_frame, text="Length (Bytes):").pack(side=tk.LEFT)
+        self.t2_len_entry = tk.Entry(ctrl_frame, width=12)
         self.t2_len_entry.insert(0, "0")
         self.t2_len_entry.pack(side=tk.LEFT, padx=5)
 
-        # 4. 64-Byte 矩陣區塊
         grid_frame = tk.LabelFrame(self.tab2, text="Command Bytes (64-Byte Payload / CDB)", padx=10, pady=10)
         grid_frame.pack(fill=tk.X, padx=10, pady=5)
 
@@ -288,13 +276,10 @@ class ScsiToolGUI:
         matrix = tk.Frame(grid_frame)
         matrix.pack()
         
-        # 畫出行標題 (00 ~ 0F)
         for col in range(16):
             tk.Label(matrix, text=f"{col:02X}", fg="#3F51B5", font=("Arial", 8, "bold")).grid(row=0, column=col+1)
             
-        # 畫出 4x16 矩陣
         for row in range(4):
-            # 列標題 (00:, 10:, 20:, 30:)
             tk.Label(matrix, text=f"{row*16:02X}:", fg="#3F51B5", font=("Arial", 8, "bold")).grid(row=row+1, column=0, padx=5)
             for col in range(16):
                 idx = row * 16 + col
@@ -304,7 +289,6 @@ class ScsiToolGUI:
                 e.bind('<KeyRelease>', lambda ev, i=idx: self.t2_auto_focus(ev, i))
                 self.t2_entries.append(e)
 
-        # 5. 執行與輸出區塊
         act_f = tk.Frame(self.tab2, padx=10, pady=5)
         act_f.pack(fill=tk.X)
         tk.Button(act_f, text="EXECUTE 64-BYTE COMMAND", command=self.t2_execute, bg="#1976D2", fg="white", font=("Arial", 11, "bold"), width=30).pack(side=tk.LEFT)
@@ -314,7 +298,7 @@ class ScsiToolGUI:
         out_f.pack(fill=tk.BOTH, expand=True)
         sb = tk.Scrollbar(out_f)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
-        self.t2_out = tk.Text(out_f, font=("Consolas", 10), bg="#000000", fg="#00FF00", yscrollcommand=sb.set) # Hacker Style
+        self.t2_out = tk.Text(out_f, font=("Consolas", 10), bg="#000000", fg="#00FF00", yscrollcommand=sb.set)
         self.t2_out.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb.config(command=self.t2_out.yview)
 
@@ -337,22 +321,18 @@ class ScsiToolGUI:
         if path:
             with open(path, "rb") as f:
                 data = f.read(64)
-                
-                # 填入 64 個小格子
                 for i, byte in enumerate(data):
                     if i < 64:
                         self.t2_entries[i].delete(0, tk.END)
                         self.t2_entries[i].insert(0, f"{byte:02X}")
                 
-                # 自動解析 Byte 40 ~ 43 為 Little-Endian 長度
                 if len(data) >= 44:
                     length_bytes = data[40:44]
-                    transfer_length = int.from_bytes(length_bytes, byteorder='little')
-                    
+                    transfer_length = int.from_bytes(length_bytes, byteorder='little') * 4
                     if transfer_length > 0:
                         self.t2_len_entry.delete(0, tk.END)
                         self.t2_len_entry.insert(0, str(transfer_length))
-                        self.t2_log(f"[Auto-Parse] 從 Offset 40-43 擷取到長度: {transfer_length} Bytes")
+                        self.t2_log(f"[Auto-Parse] 從 Offset 40-43 擷取長度並乘以 4: {transfer_length} Bytes")
 
     def t2_save_data(self):
         if not self.t2_last_in_data:
@@ -368,9 +348,8 @@ class ScsiToolGUI:
         self.t2_last_in_data = None
         
         try:
-            drive_str = self.drive_combo.get()
+            drive_num = int(self.drive_combo.get().split(" ")[0].replace("PhysicalDrive", ""))
             
-            # 蒐集 64-byte 矩陣資料
             cmd_64_bytes = []
             for entry in self.t2_entries:
                 val = entry.get().strip()
@@ -379,26 +358,68 @@ class ScsiToolGUI:
             length = int(self.t2_len_entry.get().strip() or "0")
             direction = self.t2_dir_var.get()
             ap_key_enabled = self.t2_ap_key_var.get()
+
+            # ==========================================
+            # AP_KEY 解鎖序列實作
+            # ==========================================
+            if ap_key_enabled:
+                self.t2_log("==========================================")
+                self.t2_log("[AP_KEY Auth] 開始執行特權解鎖序列...")
+                
+                ap_key_path = os.path.join("AP_Key", "ap_key.bin")
+                if not os.path.exists(ap_key_path):
+                    self.t2_log(f"[Error] 找不到金鑰檔案！請確保工具同目錄下有: {ap_key_path}")
+                    self.t2_log("=> 中止執行！請取消勾選 AP_KEY 或補齊檔案。")
+                    return
+                
+                with open(ap_key_path, "rb") as f:
+                    ap_key_data = f.read(512)
+                if len(ap_key_data) < 512:
+                    ap_key_data = ap_key_data.ljust(512, b'\x00')
+
+                # Step 1: Data-Out
+                cdb1 = [0x06, 0xfe, 0xc0, 0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+                self.t2_log(" -> [1/3] 發送 Data-Out (Length: 512, Payload: ap_key.bin)")
+                st1, _, _ = send_scsi_command(drive_num, cdb1, 512, SCSI_IOCTL_DATA_OUT, list(ap_key_data))
+                if st1 != 0:
+                    self.t2_log(f"   [Error] 序列 1 失敗！Status: 0x{st1:02X}")
+                    return
+
+                # Step 2: No-Data
+                cdb2 = [0x06, 0xfe, 0xc1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+                self.t2_log(" -> [2/3] 發送 No-Data (Length: 0)")
+                st2, _, _ = send_scsi_command(drive_num, cdb2, 0, SCSI_IOCTL_DATA_UNSPECIFIED, None)
+                if st2 != 0:
+                    self.t2_log(f"   [Error] 序列 2 失敗！Status: 0x{st2:02X}")
+                    return
+
+                # Step 3: Data-In
+                cdb3 = [0x06, 0xfe, 0xc3, 0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+                self.t2_log(" -> [3/3] 發送 Data-In (Length: 512)")
+                st3, _, _ = send_scsi_command(drive_num, cdb3, 512, SCSI_IOCTL_DATA_IN, None)
+                if st3 != 0:
+                    self.t2_log(f"   [Error] 序列 3 失敗！Status: 0x{st3:02X}")
+                    return
+
+                self.t2_log("[AP_KEY Auth] 解鎖序列執行完畢，裝置進入特權模式！")
+                self.t2_log("==========================================\n")
             
-            # TODO: 這裡目前僅實作將收集到的參數顯示出來。
-            # 因為原生的 SCSI Pass Through Direct 的 CDB 欄位最大只支援 16 Bytes。
-            # 64-Byte 的指令通常需要透過特定的 Vendor CDB 包裝，或是使用 NVMe Pass Through IOCTL。
-            # 請在之後依照您的硬體規格，修改這裡的底層呼叫邏輯。
-            
+            # ==========================================
+            # 64-Byte 主體指令 (模擬/等待實作區)
+            # ==========================================
             dir_str = "DATA IN" if direction == SCSI_IOCTL_DATA_IN else "DATA OUT" if direction == SCSI_IOCTL_DATA_OUT else "NO DATA"
-            self.t2_log(f">>> 執行目標: {drive_str}")
+            self.t2_log(f">>> 執行主指令目標: {self.drive_combo.get()}")
             self.t2_log(f">>> 傳輸方向: {dir_str} | 長度: {length} Bytes")
-            self.t2_log(f">>> AP_KEY 狀態: {'[啟用 ON]' if ap_key_enabled else '[停用 OFF]'}")
-            self.t2_log(">>> 收集到的 64-Byte 指令 Payload (Hex):")
+            self.t2_log(">>> 收集到的 64-Byte Payload (Hex):")
             self.t2_log(hexdump(bytes(cmd_64_bytes), 16))
             
-            self.t2_log("\n[等待實作] 參數已成功收集。請在此處串接對應的 64-byte 底層 API...")
+            self.t2_log("\n[等待實作] 主指令參數已收集完畢。請在此處串接對應的 64-byte 底層 API...")
             
-            # 假資料模擬 Data In (供你測試儲存按鈕)
+            # 模擬 Data In 接收 (供你測試介面儲存功能)
             if direction == SCSI_IOCTL_DATA_IN and length > 0:
                 dummy_data = bytes([0xAA, 0xBB, 0xCC, 0xDD] * (length // 4 + 1))[:length]
                 self.t2_last_in_data = dummy_data
-                self.t2_log("\n--- (模擬) Data In 接收結果 ---")
+                self.t2_log("\n--- (模擬) 64-Byte 指令 Data In 接收結果 ---")
                 self.t2_log(hexdump(dummy_data))
                 
         except Exception as e:
