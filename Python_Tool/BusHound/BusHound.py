@@ -18,6 +18,9 @@ SCSI_IOCTL_DATA_OUT = 0
 SCSI_IOCTL_DATA_IN = 1
 SCSI_IOCTL_DATA_UNSPECIFIED = 2
 
+FSCTL_LOCK_VOLUME = 0x00090018
+FSCTL_UNLOCK_VOLUME = 0x0009001C
+
 class SCSI_PASS_THROUGH_DIRECT(ctypes.Structure):
     _fields_ = [
         ("Length", wintypes.USHORT), ("ScsiStatus", ctypes.c_ubyte),
@@ -56,13 +59,31 @@ def hexdump(src, length=16):
         result.append(f"{i:04X}   {hex_str:<{length*3}}   {ascii_str}")
     return '\n'.join(result)
 
-def send_scsi_command(physical_drive_num, cdb_bytes, data_transfer_length, direction, out_data_bytes=None):
+# --- 裝置控制 (Open / Close / Lock) ---
+def open_drive(physical_drive_num):
     drive_path = f"\\\\.\\PhysicalDrive{physical_drive_num}"
     kernel32 = ctypes.windll.kernel32
     handle = kernel32.CreateFileW(drive_path, GENERIC_READ | GENERIC_WRITE, 
                                   FILE_SHARE_READ | FILE_SHARE_WRITE, None, OPEN_EXISTING, 0, None)
     if handle == -1: raise PermissionError(f"Open Failed: {kernel32.GetLastError()}")
+    return handle
 
+def close_drive(handle):
+    ctypes.windll.kernel32.CloseHandle(handle)
+
+def lock_drive(handle):
+    bytes_returned = wintypes.DWORD()
+    kernel32 = ctypes.windll.kernel32
+    result = kernel32.DeviceIoControl(handle, FSCTL_LOCK_VOLUME, None, 0, None, 0, ctypes.byref(bytes_returned), None)
+    err_code = kernel32.GetLastError() if not result else 0
+    return result != 0, err_code
+
+def unlock_drive(handle):
+    bytes_returned = wintypes.DWORD()
+    ctypes.windll.kernel32.DeviceIoControl(handle, FSCTL_UNLOCK_VOLUME, None, 0, None, 0, ctypes.byref(bytes_returned), None)
+
+# --- 核心通訊 ---
+def send_scsi_command(handle, cdb_bytes, data_transfer_length, direction, out_data_bytes=None):
     sense_buffer = SENSE_DATA_BUFFER()
     
     if direction == SCSI_IOCTL_DATA_UNSPECIFIED:
@@ -93,11 +114,11 @@ def send_scsi_command(physical_drive_num, cdb_bytes, data_transfer_length, direc
     for i in range(len(cdb_bytes)): combined.sptd.Cdb[i] = cdb_bytes[i]
 
     bytes_returned = wintypes.DWORD()
+    kernel32 = ctypes.windll.kernel32
     result = kernel32.DeviceIoControl(handle, IOCTL_SCSI_PASS_THROUGH_DIRECT, 
                                       ctypes.byref(combined), ctypes.sizeof(combined),
                                       ctypes.byref(combined), ctypes.sizeof(combined), 
                                       ctypes.byref(bytes_returned), None)
-    kernel32.CloseHandle(handle)
     
     if not result: raise OSError(f"IOCTL Failed: {kernel32.GetLastError()}")
     
@@ -109,7 +130,7 @@ class ScsiToolGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Python Storage Debug Tool (Multi-Tab Edition)")
-        self.root.geometry("1000x850")
+        self.root.geometry("1050x850") 
         
         self.create_global_header()
         
@@ -194,6 +215,7 @@ class ScsiToolGUI:
         self.t1_out.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         sb.config(command=self.t1_out.yview)
 
+    # Tab 1 Methods 
     def t1_auto_focus(self, ev, idx):
         if len(self.t1_cdb_entries[idx].get()) >= 2 and idx < 15:
             self.t1_cdb_entries[idx+1].focus_set()
@@ -225,18 +247,24 @@ class ScsiToolGUI:
         self.t1_out.insert(tk.END, m + "\n"); self.t1_out.see(tk.END)
     def t1_execute(self):
         self.t1_out.delete(1.0, tk.END); self.t1_last_in_data = None
+        handle = None
         try:
             dnum = int(self.drive_combo.get().split(" ")[0].replace("PhysicalDrive", ""))
             cdb = [int(e.get() or "00", 16) for e in self.t1_cdb_entries]
             length = int(self.t1_len_entry.get() or "0") if self.t1_dir_var.get() != SCSI_IOCTL_DATA_UNSPECIFIED else 0
             out_b = list(self.t1_loaded_data_bin) if self.t1_loaded_data_bin else [0]*length
             
-            st, data, sense = send_scsi_command(dnum, cdb, length, self.t1_dir_var.get(), out_b)
+            handle = open_drive(dnum)
+            st, data, sense = send_scsi_command(handle, cdb, length, self.t1_dir_var.get(), out_b)
+            
             self.t1_log(f"Status: 0x{st:02X}")
             if self.t1_dir_var.get() == SCSI_IOCTL_DATA_IN and length > 0:
                 if st == 0: self.t1_last_in_data = data
                 self.t1_log(hexdump(data))
-        except Exception as e: self.t1_log(f"Error: {e}")
+        except Exception as e: 
+            self.t1_log(f"Error: {e}")
+        finally:
+            if handle: close_drive(handle)
 
     # ==========================================
     # Tab 2: VUC 64-Byte 工具區塊
@@ -244,7 +272,8 @@ class ScsiToolGUI:
     def init_tab2_64byte(self):
         self.t2_dir_var = tk.IntVar(value=SCSI_IOCTL_DATA_IN)
         self.t2_entries = []
-        self.t2_ap_key_var = tk.BooleanVar(value=True) 
+        self.t2_ap_key_var = tk.BooleanVar(value=True)
+        self.t2_lock_var = tk.BooleanVar(value=True)
         self.t2_last_in_data = None
         self.t2_loaded_data_bin = None 
 
@@ -253,6 +282,8 @@ class ScsiToolGUI:
 
         tk.Checkbutton(ctrl_frame, text="AP_KEY (解鎖)", variable=self.t2_ap_key_var, font=("Arial", 10, "bold"), fg="#D32F2F").pack(side=tk.LEFT, padx=10)
         
+        tk.Checkbutton(ctrl_frame, text="Lock Device (防干擾鎖定)", variable=self.t2_lock_var, font=("Arial", 10, "bold"), fg="#E65100").pack(side=tk.LEFT, padx=5)
+
         ttk.Separator(ctrl_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
         tk.Radiobutton(ctrl_frame, text="Data In", variable=self.t2_dir_var, value=SCSI_IOCTL_DATA_IN).pack(side=tk.LEFT)
         tk.Radiobutton(ctrl_frame, text="Data Out", variable=self.t2_dir_var, value=SCSI_IOCTL_DATA_OUT).pack(side=tk.LEFT)
@@ -356,6 +387,7 @@ class ScsiToolGUI:
     def t2_execute(self):
         self.t2_out.delete(1.0, tk.END)
         self.t2_last_in_data = None
+        handle = None
         
         try:
             drive_num = int(self.drive_combo.get().split(" ")[0].replace("PhysicalDrive", ""))
@@ -368,11 +400,30 @@ class ScsiToolGUI:
             length = int(self.t2_len_entry.get().strip() or "0")
             direction = self.t2_dir_var.get()
             ap_key_enabled = self.t2_ap_key_var.get()
+            lock_enabled = self.t2_lock_var.get()
 
             is_matrix_empty = all(b == 0 for b in cmd_64_bytes)
 
             # ==========================================
-            # 1. AP_KEY 解鎖序列 (若啟用)
+            # Handle 建立與防干擾鎖定狀態顯示
+            # ==========================================
+            handle = open_drive(drive_num)
+            
+            if lock_enabled:
+                self.t2_log("================= LOCK STATUS ================")
+                is_locked, err_code = lock_drive(handle)
+                if is_locked:
+                    self.t2_log("[ O K ] 實體磁碟已成功獨佔鎖定 (FSCTL_LOCK_VOLUME)")
+                    self.t2_log("        目前的 VUC 序列將受到嚴格的防干擾保護。")
+                else:
+                    self.t2_log(f"[WARNING] 鎖定失敗！(Error Code: {err_code})")
+                    self.t2_log("          Windows 系統或其他程式可能會在背景偷下 Read CMD！")
+                    self.t2_log("          💡 專家提示：若持續受到干擾，請至「電腦管理 -> 磁碟管理」")
+                    self.t2_log("          將該磁碟設為「離線 (Offline)」，即可徹底阻斷 Windows 輪詢。")
+                self.t2_log("==============================================\n")
+
+            # ==========================================
+            # 1. AP_KEY 解鎖序列
             # ==========================================
             if ap_key_enabled:
                 self.t2_log("==========================================")
@@ -381,7 +432,6 @@ class ScsiToolGUI:
                 ap_key_path = os.path.join("AP_Key", "ap_key.bin")
                 if not os.path.exists(ap_key_path):
                     self.t2_log(f"[Error] 找不到金鑰檔案！請確保路徑正確: {ap_key_path}")
-                    self.t2_log("=> 中止執行！請取消勾選 AP_KEY 或補齊檔案。")
                     return
                 
                 with open(ap_key_path, "rb") as f:
@@ -389,68 +439,67 @@ class ScsiToolGUI:
                 if len(ap_key_data) < 512:
                     ap_key_data = ap_key_data.ljust(512, b'\x00')
 
-                # AP_KEY Cmd 1
                 cdb1 = [0x06, 0xfe, 0xc0, 0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-                self.t2_log(" -> [AP_KEY 1/3] 發送解鎖 Payload")
-                st1, _, _ = send_scsi_command(drive_num, cdb1, 512, SCSI_IOCTL_DATA_OUT, list(ap_key_data))
+                self.t2_log(" -> [AP_KEY 1/3] 發送 Data-Out (Length: 512)")
+                st1, _, _ = send_scsi_command(handle, cdb1, 512, SCSI_IOCTL_DATA_OUT, list(ap_key_data))
                 if st1 != 0: return self.t2_log(f"   [Error] 序列 1 失敗！Status: 0x{st1:02X}")
 
-                # AP_KEY Cmd 2
                 cdb2 = [0x06, 0xfe, 0xc1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-                self.t2_log(" -> [AP_KEY 2/3] 發送 No-Data")
-                st2, _, _ = send_scsi_command(drive_num, cdb2, 0, SCSI_IOCTL_DATA_UNSPECIFIED, None)
+                self.t2_log(" -> [AP_KEY 2/3] 發送 No-Data (Length: 0)")
+                st2, _, _ = send_scsi_command(handle, cdb2, 0, SCSI_IOCTL_DATA_UNSPECIFIED, None)
                 if st2 != 0: return self.t2_log(f"   [Error] 序列 2 失敗！Status: 0x{st2:02X}")
 
-                # AP_KEY Cmd 3
                 cdb3 = [0x06, 0xfe, 0xc3, 0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-                self.t2_log(" -> [AP_KEY 3/3] 讀取解鎖狀態")
-                st3, _, _ = send_scsi_command(drive_num, cdb3, 512, SCSI_IOCTL_DATA_IN, None)
+                self.t2_log(" -> [AP_KEY 3/3] 發送 Data-In (Length: 512)")
+                st3, _, _ = send_scsi_command(handle, cdb3, 512, SCSI_IOCTL_DATA_IN, None)
                 if st3 != 0: return self.t2_log(f"   [Error] 序列 3 失敗！Status: 0x{st3:02X}")
 
                 self.t2_log("[AP_KEY Auth] 解鎖成功，硬碟進入特權模式！")
                 self.t2_log("==========================================\n")
             
-            # --- 純解鎖模式防呆 ---
             if ap_key_enabled and is_matrix_empty:
                 self.t2_log("[系統提示] 偵測到 64-Byte 矩陣全為 0，且 AP_KEY 已勾選。")
                 self.t2_log("=> 僅執行 AP_KEY 解鎖序列，跳過後續 VUC 指令。")
                 return
 
             # ==========================================
-            # 2. VUC 主體指令序列 (背景執行 VUC 1 & 3, 僅顯示 VUC 2)
+            # 2. VUC 主體指令序列
             # ==========================================
             self.t2_log("==========================================")
             self.t2_log(f"[VUC Sequence] 背景執行 64-Byte VUC 配置序列...")
             
-            # ----------------------------------------------------
-            # [VUC Cmd 1] 寫入矩陣設定 (背景執行, 隱藏成功訊息)
-            # ----------------------------------------------------
+            # [VUC Cmd 1]
             vuc_cdb1 = [0x06, 0xfe, 0xc0, 0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-            
             vuc1_payload = cmd_64_bytes.copy()
             if len(vuc1_payload) < 512:
                 vuc1_payload += [0] * (512 - len(vuc1_payload))
                 
-            st_vuc1, _, _ = send_scsi_command(drive_num, vuc_cdb1, 512, SCSI_IOCTL_DATA_OUT, vuc1_payload)
+            st_vuc1, _, _ = send_scsi_command(handle, vuc_cdb1, 512, SCSI_IOCTL_DATA_OUT, vuc1_payload)
             if st_vuc1 != 0: return self.t2_log(f"   [Error] VUC 1 (配置指令) 失敗！Status: 0x{st_vuc1:02X}")
 
-            # ----------------------------------------------------
-            # [VUC Cmd 2] 執行資料傳輸 (這是重點，保留並優化顯示)
-            # ----------------------------------------------------
+            # [VUC Cmd 2] 計算 Sectors 與 Byte Length
             sectors = length // 512 if length > 0 else 0
             b3 = (sectors >> 8) & 0xFF
             b4 = sectors & 0xFF
+            
+            bytes_len = sectors * 512
+            b5 = (bytes_len >> 24) & 0xFF
+            b6 = (bytes_len >> 16) & 0xFF
+            b7 = (bytes_len >> 8) & 0xFF
+            b8 = bytes_len & 0xFF
             
             if direction == SCSI_IOCTL_DATA_IN:
                 b2 = 0xc2
             else:
                 b2 = 0xc1
                 
-            vuc_cdb2 = [0x06, 0xfe, b2, b3, b4, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+            # 將 Byte 5~8 填入對應的位置 (index 5~8)
+            vuc_cdb2 = [0x06, 0xfe, b2, b3, b4, b5, b6, b7, b8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
             
             dir_str2 = "DATA IN" if direction == SCSI_IOCTL_DATA_IN else "DATA OUT" if direction == SCSI_IOCTL_DATA_OUT else "NO DATA"
             self.t2_log(f" -> 發送主要指令 ({dir_str2})")
             self.t2_log(f"    (OpCode: 0x{b2:02X}, Sectors: 0x{sectors:04X} -> Byte3: 0x{b3:02X}, Byte4: 0x{b4:02X})")
+            self.t2_log(f"    (Bytes Length: 0x{bytes_len:08X} -> Byte5~8: 0x{b5:02X} 0x{b6:02X} 0x{b7:02X} 0x{b8:02X})")
             
             out_b = None
             if direction == SCSI_IOCTL_DATA_OUT:
@@ -458,7 +507,7 @@ class ScsiToolGUI:
                 if len(out_b) < length: out_b += [0]*(length-len(out_b))
                 out_b = out_b[:length]
 
-            st_vuc2, data_vuc2, _ = send_scsi_command(drive_num, vuc_cdb2, length, direction, out_b)
+            st_vuc2, data_vuc2, _ = send_scsi_command(handle, vuc_cdb2, length, direction, out_b)
             if st_vuc2 != 0: return self.t2_log(f"   [Error] VUC 2 (資料傳輸) 失敗！Status: 0x{st_vuc2:02X}")
             
             if direction == SCSI_IOCTL_DATA_IN and length > 0:
@@ -471,11 +520,9 @@ class ScsiToolGUI:
             elif direction == SCSI_IOCTL_DATA_UNSPECIFIED:
                 self.t2_log("    (No-Data 指令執行成功)\n")
 
-            # ----------------------------------------------------
-            # [VUC Cmd 3] 讀取狀態 (背景執行, 完全隱藏顯示)
-            # ----------------------------------------------------
+            # [VUC Cmd 3]
             vuc_cdb3 = [0x06, 0xfe, 0xc3, 0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-            st_vuc3, data_vuc3, _ = send_scsi_command(drive_num, vuc_cdb3, 512, SCSI_IOCTL_DATA_IN, None)
+            st_vuc3, data_vuc3, _ = send_scsi_command(handle, vuc_cdb3, 512, SCSI_IOCTL_DATA_IN, None)
             if st_vuc3 != 0: return self.t2_log(f"   [Error] VUC 3 (狀態讀取) 失敗！Status: 0x{st_vuc3:02X}")
             
             self.t2_log("[VUC Sequence] 全部指令序列執行成功！")
@@ -483,6 +530,11 @@ class ScsiToolGUI:
 
         except Exception as e:
             self.t2_log(f"[Exception] 發生未預期錯誤: {str(e)}")
+        finally:
+            if handle:
+                if lock_enabled:
+                    unlock_drive(handle)
+                close_drive(handle)
 
 if __name__ == "__main__":
     if ctypes.windll.shell32.IsUserAnAdmin():
