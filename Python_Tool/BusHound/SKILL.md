@@ -8,6 +8,27 @@ description: >
 
 # BusHound.py — AI 知識總結
 
+## 📑 目錄規劃 (Table of Contents)
+- [一、專案目的與架構概述](#一專案目的與架構概述)
+- [二、核心技術棧](#二核心技術棧)
+- [三、GUI 與邏輯解析](#三gui-與邏輯解析)
+- [四、VUC (64-byte) 實務流程解析](#四vuc-64-byte-實務流程解析)
+- [五、已知缺陷與潛在 Bug (已修復/待修復)](#五已知缺陷與潛在-bug-已修復待修復)
+- [六、除錯工具與技巧](#六除錯工具與技巧)
+- [七、給後續 AI 的開發建議](#七給後續-ai-的開發建議)
+- [八、打包成 EXE（PyInstaller 指南）](#八打包成-exepyinstaller-指南)
+- [九、更新歷程 (Changelog)](#九更新歷程-changelog)
+- [十、後續功能規劃與研究方向](#十後續功能規劃與研究方向)
+
+## 📖 建議下次閱讀順序 (Suggested Reading Order for AI)
+> 如果你是剛接手這個專案的 AI，強烈建議按照以下順序閱讀此文件，以便最快進入狀況：
+> 1. **[十、後續功能規劃與研究方向](#十後續功能規劃與研究方向)**：特別是 **10.7 尚未完成清單 (TODO)**，這是你當前的首要任務目標。
+> 2. **[九、更新歷程 (Changelog)](#九更新歷程-changelog)**：了解前幾個 Session 已經完成的事項（包含後端分離、PacketLogger 實作與各種 Bug 修復），避免重複造輪子。
+> 3. **[一、專案目的與架構概述](#一專案目的與架構概述)**：快速掌握重構後的專案目錄結構與職責劃分（`BusHound.py` 與 `backend_storage.py`）。
+> 4. **[四、VUC (64-byte) 實務流程解析](#四vuc-64-byte-實務流程解析)**：若你的任務涉及發送 SCSI 或 NVMe 實體指令，請務必了解其通訊與上鎖機制。
+> 5. 若有打包需求，再閱讀 **[八、打包成 EXE](#八打包成-exepyinstaller-指南)**。
+
+
 ## 一、專案目的與架構概述
 
 **目的**：模擬商業工具 BusHound，讓工程師能在 Windows 上透過 Python 直接對實體磁碟（PhysicalDrive）發送 SCSI / Vendor Unique Command (VUC)，並觀察回應資料與 Sense Data。
@@ -463,3 +484,127 @@ BusHound/
 #### 本次修改檔案
 - `BusHound.py`：新增 `get_base_dir()` 函式 + AP_Key 搜尋改用 `base_dir`
 - `SKILL.md`（本文件）：新增第八節打包指南 + Session 3 changelog
+
+---
+
+### 2026-08-08 Session 4 — 功能規劃、後端分離與封包錄製研究
+
+#### 完成項目
+
+**架構重構：後端分離**
+- 將 BusHound.py 內的所有後端邏輯（Windows API 常數、結構體、SCSI 函式、協定解析）移至獨立的 `backend_storage.py`
+- `BusHound.py` 改為 `from backend_storage import *`，負責純 GUI 邏輯
+- `backend_storage.py` 新增 `PacketLogger` class（見下方說明）
+
+**新增 PacketLogger（backend_storage.py）**
+- Thread-safe 的自發指令記錄器，掛鉤在 `send_scsi_command()` 內
+- 每次 IOCTL 回傳後自動記錄：index、timestamp（毫秒精度）、drive、direction、CDB hex、cmd_name（解析後）、data_len、**完整 payload hex**、scsi_status、sense_str、elapsed_ms
+- 支援 callback 機制，GUI 可即時收到每筆記錄
+- 支援 `export_csv()` 匯出所有記錄
+- 透過 `packet_logger.enable()` / `disable()` 控制
+
+**注意**：`send_scsi_command()` 新增了 `drive_label="?"` 參數，呼叫端需傳入磁碟名稱字串（如 `"PhysicalDrive1"`），否則記錄欄位顯示 `?`。後續修改 Tab1 / Tab2 呼叫時需補上此參數。
+
+---
+
+## 十、後續功能規劃與研究方向
+
+> 下次 AI 接手時，請先讀此節，從「尚未完成」清單挑選目標繼續。
+
+### 10.1 封包錄製（Packet Sniffer Tab）— 架構設計
+
+目標：新增 Tab 3「Packet Sniffer」，提供即時封包記錄與監控。
+
+#### 實現方式分析
+
+| 技術 | 適用對象 | Payload 完整性 | 複雜度 | 需額外安裝 |
+|---|---|---|---|---|
+| **PacketLogger（已實作）** | BusHound 自發的指令 | ✅ 100% 完整 | 低 | 無 |
+| **ETW Storport** | 系統全域所有 SCSI/NVMe | ❌ 僅 metadata（CDB、長度、時間） | 中 | 無（Windows 內建）|
+| **frida hook** | 指定 PID 的 user-mode 程式 | ✅ 完整（拿到目標 process 的 DeviceIoControl buffer）| 中 | `pip install frida frida-tools` |
+| **Kernel Filter Driver** | 系統全域所有 I/O，含核心層 | ✅ 完整（最完整） | 極高 | WDK + EV 簽章，不適合純 Python |
+
+#### 建議實作順序
+
+1. **Phase 1（最優先）**：完成 Tab 3 GUI，整合 PacketLogger，顯示自發指令完整記錄。
+2. **Phase 2**：整合 ETW Storport，監聽外部指令的 metadata（CDB + 時間戳記）。
+3. **Phase 3（選用）**：整合 frida，可 hook 指定 Process（如 vendor exe）取得完整 Payload。
+
+#### Tab 3 GUI 設計草圖
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ [▶ Start Logging]  [■ Stop]  [🗑 Clear]  [💾 Export CSV] │
+│ ─────────────────────────────────────────────────────── │
+│ # | Time      | Drive | Dir | Cmd Name      | Len | ms  │
+│ 1 | 10:23:01  | PD1   | IN  | READ(10)      | 512 | 2.3 │
+│ 2 | 10:23:02  | PD1   | OUT | VUC/AP_KEY    |  64 | 1.1 │
+│ ─────────────────────────────────────────────────────── │
+│ 選中封包詳情：                                          │
+│   CDB:     28 00 00 00 00 00 00 00 01 00 00 00 00 00... │
+│   Payload: 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D... │
+│   Sense:   (none) / Sense Key: NO SENSE                 │
+└─────────────────────────────────────────────────────────┘
+```
+
+### 10.2 ETW Storport 整合細節
+
+- **Provider GUID**：`{C4636A1E-7986-4646-BF10-7BC3B4A76E8E}`（Microsoft-Windows-StorPort）
+- **Python 呼叫方式**：透過 `ctypes` 呼叫 `Advapi32.dll` 的 `StartTraceW` / `EnableTraceEx2` / `OpenTraceW` / `ProcessTrace`，或使用第三方套件 `pywintrace`（`pip install pywintrace`）
+- **事件結構**：`EVENT_RECORD` → 解析 `UserData` 欄位，含 SCSI CDB（最多 16 bytes）、Transfer Length、方向、SRB Status
+- **重要設定**：必須先在 Event Viewer 啟用 Storport 的 Analytic channel 才能獲取更多事件（預設只有 Operational channel）
+- **效能注意**：大量 I/O 時 ETW 會產生極多事件，必須使用 Circular Buffer 模式或限速
+
+### 10.3 frida Hook 整合細節
+
+- **安裝**：`pip install frida frida-tools`
+- **原理**：frida 可在 User-mode 動態 hook 目標 process 的 `DeviceIoControl` 函式，在呼叫前後截取 `lpInBuffer` / `lpOutBuffer`（含完整 SPTD 結構與 Payload）
+- **限制**：
+  - 只能 hook user-mode process（無法看到 OS 核心自身的 I/O）
+  - 目標 process 需可被 attach（部分有保護的商業軟體會阻止）
+  - frida server 需要與目標 process 相同的 bitness（32/64）
+- **使用情境**：Vendor 提供的測試 exe 對磁碟下指令時，可用 frida 攔截完整 SCSI payload
+
+### 10.4 Kernel Filter Driver（備忘，暫不實作）
+
+- **運作層**：插在 Storport 與 miniport 之間，攔截所有 SRB（SCSI Request Block）
+- **開發需求**：C/C++ + WDK + Visual Studio + EV Code Signing Certificate
+- **簽章方式**：
+  - 開發測試：`bcdedit /set testsigning on` + 自簽憑證（僅限開發機）
+  - 正式分發：EV 憑證（$300-500 USD/年）+ Microsoft WHQL Portal 簽章
+- **Python 橋接**：驅動可透過 Named Pipe 或自訂 IOCTL device 把資料傳回 Python GUI
+- **現況評估**：對個人/小團隊開發環境來說門檻過高，除非有明確的量產需求，否則不建議走此路線
+
+### 10.5 NVMe Admin Commands（下一個主要功能）
+
+- **IOCTL**：`IOCTL_STORAGE_PROTOCOL_COMMAND`（值 `0x2D1420`）
+- **需要定義的 ctypes 結構體**：
+  - `STORAGE_PROTOCOL_COMMAND`（主要命令容器）
+  - `STORAGE_PROTOCOL_SPECIFIC_DATA`（協定特定資料）
+  - `STORAGE_PROTOCOL_DATA_DESCRIPTOR`（描述符）
+- **優先實作的指令**：
+  - `Identify Controller`（Opcode `0x06`，CNS=1）→ 取得型號、SN、FW 版本（4096 bytes）
+  - `Get Log Page - SMART/Health Info`（Opcode `0x02`，Log ID `0x02`）→ 取得溫度、壽命、錯誤計數
+- **GUI 規劃**：新增 Tab 4「NVMe Admin Cmd」，含預設按鈕直接填入 Opcode 參數
+- **參考來源**：`smartmontools` 的 `os_win32.cpp` 是 Windows 上 NVMe IOCTL 最完整的開源 C 參考實作
+
+### 10.6 單元測試（Unit Tests）規劃
+
+- **測試檔案**：`test_backend.py`（使用 Python 內建 `unittest`）
+- **測試項目**：
+  1. `test_decode_cdb_known_opcodes()`：驗證已知 Opcode 解析正確
+  2. `test_decode_cdb_vuc()`：驗證 VUC 0x06/0xFE/0xC0~0xC3 識別正確
+  3. `test_parse_sense_data_valid()`：餵合法 Sense bytes，驗證 Sense Key / ASC / ASCQ
+  4. `test_parse_sense_data_too_short()`：餵 < 14 bytes，確認回傳「無有效」訊息
+  5. `test_structure_size()`：`ctypes.sizeof(SCSI_PASS_THROUGH_DIRECT)` 驗證符合預期值（Windows 64-bit = 56 bytes）
+  6. `test_packet_logger_basic()`：驗證 PacketLogger 能正確記錄、清除、計數
+
+### 10.7 尚未完成清單（給下一個 AI 的 TODO）
+
+- `[ ]` Tab 3 Packet Sniffer GUI 實作（整合 PacketLogger 顯示）
+- `[ ]` BusHound.py Tab1 / Tab2 的 `send_scsi_command()` 呼叫補上 `drive_label` 參數
+- `[ ]` ETW Storport 整合（Phase 2，可先用 `pywintrace`）
+- `[ ]` frida hook 整合（Phase 3，選用）
+- `[ ]` NVMe Admin Cmd Tab 4 實作（Identify + SMART）
+- `[ ]` `test_backend.py` 單元測試建置
+- `[ ]` 打包指令更新：需將 `backend_storage.py` 一起納入（`--onefile` 模式會自動處理，`--onedir` 需確認）
