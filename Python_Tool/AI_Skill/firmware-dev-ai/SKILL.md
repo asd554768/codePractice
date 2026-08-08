@@ -9,7 +9,56 @@ description: >-
   generating module design specs (SDS/SRS).
 ---
 
-# Firmware Dev AI Workflow Skill Pack
+# 韌體開發 AI 輔助工作流程技能包 (Firmware Dev AI Workflow Skill Pack)
+
+> **AI 模型閱讀指南 (Notice for AI Models)**:
+> 本文件已優化為結構化 Prompt 規範。任何 AI 模型（Ollama/Claude/GPT/Qwen/DeepSeek）讀取本 Skill 時，請優先查閱【AI 閱讀順序與決策樹】，直接跳轉至對應任務模組執行。
+
+---
+
+## 📚 檔案目錄 (Table of Contents)
+
+1. [🧭 AI 模型執行與閱讀導引 (Recommended AI Execution Flow)](#-ai-模型執行與閱讀導引-recommended-ai-execution-flow)
+2. [模組一：現有 Skill 適用性分析 (Existing Skill Analysis)](#模組一現有-skill-適用性分析公司環境)
+3. [模組二：開源模型選擇與 Ollama 設定 (Local Open-Source Model Setup)](#模組二開源模型選擇與-ollama-設定)
+4. [模組三：程式流程與 Call Graph 分析 Prompt 模板 (Code Flow & RCA)](#模組三程式流程分析-prompt-模板)
+5. [模組四：程式流程圖與 Draw.io 繪製 Prompt 模板 (Diagram Generation)](#模組四程式流程圖與時序圖繪製-prompt-模板)
+6. [模組五：Doxygen 與 SDS 模組規格書生成 Prompt 模板 (Documentation)](#模組五文件撰寫-prompt-模板)
+7. [模組六：Log 文字解析與 HardFault Dump 分析 Prompt 模板 (Log Analysis)](#模組六log-文字解析與學習-prompt-模板)
+8. [模組七：Token 節省技巧 (Token Optimization Techniques)](#模組七token-節省技巧)
+9. [模組八：Continue.dev IDE 整合設定 (IDE Integration)](#模組八continuedev-ide-整合設定)
+10. [模組九：Grenade.tw 60 個精選工具對照表 (2026 Recommended Stack)](#模組九grenadetw-2026-精選-claude-skills--github-開源專案對照與記錄)
+
+---
+
+## 🧭 AI 模型執行與閱讀導引 (Recommended AI Execution Flow)
+
+當接收到使用者任務時，AI 模型請依照以下**決策樹 (Decision Tree)** 優先跳轉至相應模組：
+
+`
+[使用者請求]
+  │
+  ├── 1. 任務：理解程式流程 / 繪製流程圖 / 分析 Call Graph
+  │    └── 📖 跳轉：[模組三] 程式流程分析  ➔  [模組四] 流程圖/Draw.io 繪製
+  │
+  ├── 2. 任務：生成 Doxygen 注解 / 撰寫 SDS 模組設計規格書
+  │    └── 📖 跳轉：[模組五] 文件撰寫 (嚴格執行：禁止修改原始碼邏輯)
+  │
+  ├── 3. 任務：除錯 / 解析 HardFault Register Dump / 處理 Log
+  │    └── 📖 跳轉：[模組三] 3.3 RCA 模板  ➔  [模組六] Log 解析與 Dump 分析
+  │
+  ├── 4. 任務：優化 Prompt / 降低 Token 費用 / 分析大型 Codebase
+  │    └── 📖 跳轉：[模組七] Token 節省技巧 (Constraint-First / Session Card)
+  │
+  ├── 5. 任務：設定本地 Ollama 開源模型 / 配置 IDE 擴充功能
+  │    └── 📖 跳轉：[模組二] 模型與 Modelfile 設定  ➔  [模組八] Continue.dev 設定
+  │
+  └── 6. 任務：尋找其他開發工具 / 評估開源專案
+       └── 📖 跳轉：[模組一] 現有 Skill 分析  ➔  [模組九] 60 個工具對照表
+`
+
+---
+
 
 This skill covers five modules for C firmware engineers:
 **Existing Skill Analysis** -> **Open-Source Model Setup** -> **Code Flow Analysis** -> **Doc Writing** -> **Token Efficiency**
@@ -430,3 +479,36 @@ NOTE: Core mental model:
 - You = Architect + Reviewer
 - LLM = Junior Dev / Boilerplate Generator
 - Datasheet = single source of truth; LLM only structures logic YOU have verified into code
+---
+
+## Module 10: Grenade.tw 2026 精選 Claude Skills & GitHub 開源專案對照與記錄
+
+參考文章：[【2026】Claude Skills 怎麼選？精選 60 個工作流程與 GitHub 開源專案清單 (Grenade 手榴彈)](https://grenade.tw/blog/claude-skills-github-2026/)
+
+將文章中精選的 60 個工具/Skill，針對 **C 語言韌體開發者** 的實務價值進行交叉對照與記錄：
+
+### 1. 核心 IDE / 開發 Agent (Part 1)
+- **Claude Code (#01)**: Anthropic CLI Agent，能讀取全專案、執行 C Makefile/CMake 測試與重構。
+- **Cursor (#02)**: VS Code AI IDE，支援韌體 Codebase 全局對話與多檔案編輯。
+- **Superpowers (#05)**: github.com/obra/superpowers — 20+ 個經過實戰驗證的 Claude Code Skills，含 TDD、Debug 與執行流程。
+- **Spec Kit (#06)**: github.com/github/spec-kit — 規格驅動開發，先寫 SDS/SRS 規格再由 AI 生成 C 程式碼。
+
+### 2. MCP 工具與上下文注入 (Part 3)
+- **Context7 (#17)**: github.com/upstash/context7 — 自動將最新 FreeRTOS/Zephyr/CMSIS 文件注入 Context，避免舊 API 幻覺。
+- **Task Master AI (#18)**: github.com/eyaltoledano/claude-task-master — 將大型韌體 PRD/SDS 拆解為條理分明的微任務流水線。
+- **markdownify-mcp (#21)**: github.com/zcaceres/markdownify-mcp — 將晶片 Datasheet PDF、規格書轉成 Markdown 供模型閱讀。
+
+### 3. 精選 Skills (Part 4)
+- **PDF Processing (#23)**: nthropics/skills/tree/main/skills/pdf — 讀取與表格擷取晶片手冊。
+- **Skill Creator (#25)**: nthropics/skills/tree/main/skills/skill-creator — 5 分鐘寫出新韌體專案專屬的 SKILL.md。
+- **Context Optimization (#29)**: github.com/muratcankoylan/agent-skills-for-context-engineering — Context 壓縮與 Token 成本最佳化。
+- **Deep Research Skill (#30)**: github.com/199-biotechnologies/claude-deep-research-skill — 八階段自動化技術選型與 MCU 評估。
+
+### 4. 本地 AI 運行引擎 (Part 5)
+- **Ollama (#31)**: github.com/ollama/ollama — 本地跑 Qwen2.5-Coder / DeepSeek-Coder，無 API 費用且程式碼不上雲端（離線 NDA 安全）。
+- **vLLM (#35)**: github.com/vllm-project/vllm — 高吞吐量推論引擎。
+
+### 5. 程式碼記憶與資源庫 (Part 8 & 9)
+- **Codebase Memory MCP (#52)**: github.com/DeusData/codebase-memory-mcp — 將韌體 Codebase 轉為知識圖譜，跨 Session 記住架構。
+- **Awesome Claude Skills (#53)**: github.com/travisvn/awesome-claude-skills — 社群精選 Skill 庫。
+- **Anthropic Skills Repo (#54)**: github.com/anthropics/skills — 官方 Skill 參考標準。
