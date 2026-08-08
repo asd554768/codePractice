@@ -28,6 +28,7 @@ description: >-
 8. [模組七：Token 節省技巧 (Token Optimization Techniques)](#模組七token-節省技巧)
 9. [模組八：Continue.dev IDE 整合設定 (IDE Integration)](#模組八continuedev-ide-整合設定)
 10. [模組九：Grenade.tw 60 個精選工具對照表 (2026 Recommended Stack)](#模組九grenadetw-2026-精選-claude-skills--github-開源專案對照與記錄)
+11. [模組十一：企業與團隊知識封裝原則 (Enterprise Knowledge Packaging)](#module-11-企業與團隊知識封裝原則-enterprise-knowledge-packaging)
 
 ---
 
@@ -512,3 +513,36 @@ NOTE: Core mental model:
 - **Codebase Memory MCP (#52)**: github.com/DeusData/codebase-memory-mcp — 將韌體 Codebase 轉為知識圖譜，跨 Session 記住架構。
 - **Awesome Claude Skills (#53)**: github.com/travisvn/awesome-claude-skills — 社群精選 Skill 庫。
 - **Anthropic Skills Repo (#54)**: github.com/anthropics/skills — 官方 Skill 參考標準。
+
+---
+
+## Module 11: 企業與團隊知識封裝原則 (Enterprise Knowledge Packaging)
+
+參考來源：[【Agent Skills 實戰入門 07】公司知識怎麼整理成 Skill (動詞實驗室)](https://verb.tw/tech/agent-skills-starter/agent-skills-07-enterprise-knowledge-packaging/)
+
+在將專案或團隊知識打包進 Skill 時，必須遵循以下工程化原則，確保 AI 能精準「導航」而非單純檔案搬家：
+
+### 1. 知識三分類原則
+把專案知識劃分為三種等級，明確告之模型處理優先度：
+- **背景知識 (Context)**：專案架構、硬體暫存器定義、縮寫術語。（讓模型「知道上下文」）
+- **硬規則 (Guardrails / Hard Rules)**：禁止動態記憶體配置 (malloc)、中斷遮蔽不可 >10µs、禁止改動極限臨界邏輯。（模型「必須嚴格遵守」）
+- **工作流 (Workflows)**：任務步驟、條件分支、失敗驗證與何時回問。（引導模型「按步驟執行」）
+
+### 2. 按「資料域 (Data Domain)」切分 References
+不要按檔案類型切分（如 docs/file1.md），應依 **任務資料域** 切分至 
+eferences/：
+- 
+eferences/bsp_registers.md (板級暫存器定義)
+- 
+eferences/rtos_concurrency.md (RTOS 競爭條件與 ISR 規範)
+- 
+eferences/safety_compliance.md (MISRA-C / 護欄規範)
+
+### 3. 只寫模型「無法自推」的專案隱性脈絡
+- **不寫**：通用 C 語法、標準庫用法、通用溝通協定概念。
+- **只寫**：專案 Legacy workaround、硬體特定 Bug（如特定版號 D-Cache 瑕疵）、團隊內部命名特例。
+
+### 4. 明確設定決策護欄 (Guardrails)
+在企業/團隊開發中，**防錯比多做更重要**：
+- 欄位或條件不足時，**禁止自行修正或通融**，應標記異常並停止詢問使用者。
+- 涉及寫入暫存器或改動 Flash 分區時，必須列出受影響模組清單。
