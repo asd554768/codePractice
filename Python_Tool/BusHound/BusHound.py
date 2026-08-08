@@ -6,12 +6,21 @@ from tkinter import ttk, messagebox, filedialog
 import subprocess
 import os
 
+def get_base_dir():
+    """取得程式根目錄：EXE 打包時回傳 EXE 所在資料夾，一般執行時回傳腳本所在資料夾。
+    PyInstaller onefile 模式下 __file__ 指向 _MEIPASS 暫存目錄，
+    必須改用 sys.executable 才能找到 EXE 旁邊的 AP_Key 資料夾。"""
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)  # PyInstaller EXE 模式
+    return os.path.dirname(os.path.abspath(__file__))  # 一般 .py 執行
+
 # --- Windows API 常數與結構 ---
 GENERIC_READ = 0x80000000
 GENERIC_WRITE = 0x40000000
 OPEN_EXISTING = 3
 FILE_SHARE_READ = 1
 FILE_SHARE_WRITE = 2
+INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value  # BUG-1 fix
 
 IOCTL_SCSI_PASS_THROUGH_DIRECT = 0x4D014
 SCSI_IOCTL_DATA_OUT = 0
@@ -21,7 +30,24 @@ SCSI_IOCTL_DATA_UNSPECIFIED = 2
 FSCTL_LOCK_VOLUME = 0x00090018
 FSCTL_UNLOCK_VOLUME = 0x0009001C
 
+MAX_TRANSFER_BYTES = 256 * 1024 * 1024  # BUG-4 fix: 256MB 安全上限
+
+def get_win_error_msg(code):
+    """用 FormatMessageW 把 GetLastError 碼轉成人類可讀字串 (BUG-1 fix)"""
+    buf = ctypes.create_unicode_buffer(512)
+    ctypes.windll.kernel32.FormatMessageW(
+        0x00001000,  # FORMAT_MESSAGE_FROM_SYSTEM
+        None, code, 0, buf, 512, None
+    )
+    return buf.value.strip() or f"Unknown error ({code})"
+
 class SCSI_PASS_THROUGH_DIRECT(ctypes.Structure):
+    # Alignment fix: 在 64-bit Windows 上 DataBuffer (void*) 需要 8-byte 對齊。
+    # USHORT(2) + 6×ubyte(6) = 8B → ULONG(4) + ULONG(4) = 8B → DataBuffer(8B) 正好對齊。
+    # 但 SenseInfoOffset(ULONG=4) 後面緊接 Cdb(16B)，結構尾端需補 padding 到 8 的倍數。
+    # 使用 _pack_ = 4 讓編譯器以 4-byte 對齊（與 WDK 頭文件一致），DataBuffer 由
+    # 前方欄位累計 16B 保證 8-byte 對齊。
+    _pack_ = 4  # Alignment fix
     _fields_ = [
         ("Length", wintypes.USHORT), ("ScsiStatus", ctypes.c_ubyte),
         ("PathId", ctypes.c_ubyte), ("TargetId", ctypes.c_ubyte),
@@ -140,9 +166,12 @@ def hexdump(src, length=16):
 def open_drive(physical_drive_num):
     drive_path = f"\\\\.\\PhysicalDrive{physical_drive_num}"
     kernel32 = ctypes.windll.kernel32
-    handle = kernel32.CreateFileW(drive_path, GENERIC_READ | GENERIC_WRITE, 
+    handle = kernel32.CreateFileW(drive_path, GENERIC_READ | GENERIC_WRITE,
                                   FILE_SHARE_READ | FILE_SHARE_WRITE, None, OPEN_EXISTING, 0, None)
-    if handle == -1: raise PermissionError(f"Open Failed: {kernel32.GetLastError()}")
+    # BUG-1 fix: 改用 INVALID_HANDLE_VALUE 常數比對，並附上人類可讀錯誤訊息
+    if handle == INVALID_HANDLE_VALUE or handle is None:
+        code = kernel32.GetLastError()
+        raise PermissionError(f"Open Failed [{code}]: {get_win_error_msg(code)}")
     return handle
 
 def close_drive(handle):
@@ -197,7 +226,9 @@ def send_scsi_command(handle, cdb_bytes, data_transfer_length, direction, out_da
                                       ctypes.byref(combined), ctypes.sizeof(combined), 
                                       ctypes.byref(bytes_returned), None)
     
-    if not result: raise OSError(f"IOCTL Failed: {kernel32.GetLastError()}")
+    if not result:
+        code = kernel32.GetLastError()
+        raise OSError(f"IOCTL Failed [{code}]: {get_win_error_msg(code)}")
     
     returned_data = bytes(data_buffer) if data_buffer else b""
     return combined.sptd.ScsiStatus, returned_data, bytes(combined.sense.data)
@@ -382,9 +413,10 @@ class ScsiToolGUI:
         self.t2_dir_var = tk.IntVar(value=SCSI_IOCTL_DATA_IN)
         self.t2_entries = []
         self.t2_ap_key_var = tk.BooleanVar(value=True)
-        self.t2_lock_var = tk.BooleanVar(value=True) 
+        self.t2_lock_var = tk.BooleanVar(value=True)
+        self.t2_keep_lock_var = tk.BooleanVar(value=False)  # BUG-3 fix: 純解鎖模式後是否保持磁碟鎖定
         self.t2_last_in_data = None
-        self.t2_loaded_data_bin = None 
+        self.t2_loaded_data_bin = None
 
         ctrl_frame = tk.Frame(self.tab2, pady=10)
         ctrl_frame.pack(fill=tk.X, padx=10)
@@ -392,6 +424,8 @@ class ScsiToolGUI:
         tk.Checkbutton(ctrl_frame, text="AP_KEY (解鎖)", variable=self.t2_ap_key_var, font=("Arial", 10, "bold"), fg="#D32F2F").pack(side=tk.LEFT, padx=10)
         
         tk.Checkbutton(ctrl_frame, text="Lock Device (防干擾鎖定)", variable=self.t2_lock_var, font=("Arial", 10, "bold"), fg="#E65100").pack(side=tk.LEFT, padx=5)
+        # BUG-3 fix: 讓使用者選擇純解鎖模式後是否持續保持磁碟獨佔鎖定
+        tk.Checkbutton(ctrl_frame, text="Keep Lock (純解鎖後維持鎖定)", variable=self.t2_keep_lock_var, font=("Arial", 9), fg="#5D4037").pack(side=tk.LEFT, padx=5)
 
         ttk.Separator(ctrl_frame, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=10)
         tk.Radiobutton(ctrl_frame, text="Data In", variable=self.t2_dir_var, value=SCSI_IOCTL_DATA_IN).pack(side=tk.LEFT)
@@ -469,13 +503,26 @@ class ScsiToolGUI:
                         self.t2_entries[i].delete(0, tk.END)
                         self.t2_entries[i].insert(0, f"{byte:02X}")
                 
+                # BUG-4 fix: 加上限保護 + 讓使用者確認自動解析值
                 if len(data) >= 44:
                     length_bytes = data[40:44]
-                    transfer_length = int.from_bytes(length_bytes, byteorder='little') * 4
-                    if transfer_length > 0:
-                        self.t2_len_entry.delete(0, tk.END)
-                        self.t2_len_entry.insert(0, str(transfer_length))
-                        self.t2_log(f"[Auto-Parse] 從 Offset 40-43 擷取長度並乘以 4: {transfer_length} Bytes")
+                    raw_val = int.from_bytes(length_bytes, byteorder='little')
+                    transfer_length = raw_val * 4
+                    if transfer_length > MAX_TRANSFER_BYTES:
+                        self.t2_log(f"[Auto-Parse] ⚠️ 解析長度 {transfer_length} Bytes 超出安全上限 ({MAX_TRANSFER_BYTES // 1024 // 1024}MB)，已略過自動填入")
+                    elif transfer_length > 0:
+                        ok = messagebox.askyesno(
+                            "確認自動解析長度",
+                            f"從 Offset 40-43 解析出：\n"
+                            f"  Raw value: 0x{raw_val:08X} (×4 = {transfer_length} Bytes)\n\n"
+                            f"是否套用此長度？"
+                        )
+                        if ok:
+                            self.t2_len_entry.delete(0, tk.END)
+                            self.t2_len_entry.insert(0, str(transfer_length))
+                            self.t2_log(f"[Auto-Parse] 已套用長度: {transfer_length} Bytes (raw=0x{raw_val:08X})")
+                        else:
+                            self.t2_log(f"[Auto-Parse] 使用者略過自動長度填入")
 
     def t2_load_data_file(self):
         path = filedialog.askopenfilename(title="選擇 Data Out Bin 檔案")
@@ -498,6 +545,7 @@ class ScsiToolGUI:
         self.t2_out.delete(1.0, tk.END)
         self.t2_last_in_data = None
         handle = None
+        lock_enabled = False  # BUG-2 fix: 確保 finally 安全，防止賦值前 crash 導致 NameError
         
         try:
             drive_num = int(self.drive_combo.get().split(" ")[0].replace("PhysicalDrive", ""))
@@ -532,10 +580,31 @@ class ScsiToolGUI:
                 self.t2_log("==========================================")
                 self.t2_log("[AP_KEY Auth] 開始執行特權解鎖序列 (3 cmds)...")
                 
-                ap_key_path = os.path.join("AP_Key", "ap_key.bin")
-                if not os.path.exists(ap_key_path):
-                    self.t2_log(f"[Error] 找不到金鑰檔案: {ap_key_path}")
-                    return
+                # BUG-5 fix: 多路徑搜尋 AP_Key，找不到則讓使用者手動選擇
+                # Packaging fix: 使用 get_base_dir() 支援 PyInstaller EXE 模式
+                base_dir = get_base_dir()
+                search_dirs = [
+                    base_dir,                              # EXE旁邊 (frozen) 或腳本目錄
+                    os.getcwd(),                           # 當前工作目錄
+                    os.path.dirname(base_dir),             # 上一層目錄
+                ]
+                ap_key_path = None
+                for d in search_dirs:
+                    candidate = os.path.join(d, "AP_Key", "ap_key.bin")
+                    if os.path.exists(candidate):
+                        ap_key_path = candidate
+                        self.t2_log(f"[AP_KEY] 找到金鑰: {candidate}")
+                        break
+                
+                if ap_key_path is None:
+                    self.t2_log("[AP_KEY] 自動搜尋未找到 AP_Key\\ap_key.bin，請手動選擇...")
+                    ap_key_path = filedialog.askopenfilename(
+                        title="選擇 AP Key 檔案 (ap_key.bin)",
+                        filetypes=[("Binary files", "*.bin"), ("All files", "*.*")]
+                    )
+                    if not ap_key_path:
+                        self.t2_log("[Error] 使用者取消選擇，中止執行。")
+                        return
                 
                 with open(ap_key_path, "rb") as f:
                     ap_key_data = f.read(512)
@@ -562,6 +631,10 @@ class ScsiToolGUI:
             
             if ap_key_enabled and is_matrix_empty:
                 self.t2_log("[系統提示] 偵測到 64-Byte 矩陣全為 0 => 純解鎖模式，跳過 VUC 指令。")
+                # BUG-3 fix: 若使用者勾選「Keep Lock」，純解鎖模式結束後不解鎖磁碟
+                if lock_enabled and self.t2_keep_lock_var.get():
+                    self.t2_log("[Keep Lock] 保持磁碟獨佔鎖定狀態（請記得手動關閉程式以解鎖）")
+                    lock_enabled = False  # 讓 finally 跳過 unlock_drive
                 return
 
             # ==========================================
@@ -628,7 +701,8 @@ class ScsiToolGUI:
         except Exception as e:
             self.t2_log(f"[Exception] 發生未預期錯誤: {str(e)}")
         finally:
-            if handle:
+            # BUG-1 fix: 改用 is not None 語意更嚴謹
+            if handle is not None:
                 if lock_enabled:
                     unlock_drive(handle)
                 close_drive(handle)
