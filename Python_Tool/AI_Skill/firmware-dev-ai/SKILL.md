@@ -516,33 +516,67 @@ NOTE: Core mental model:
 
 ---
 
-## Module 11: 企業與團隊知識封裝原則 (Enterprise Knowledge Packaging)
+---
 
-參考來源：[【Agent Skills 實戰入門 07】公司知識怎麼整理成 Skill (動詞實驗室)](https://verb.tw/tech/agent-skills-starter/agent-skills-07-enterprise-knowledge-packaging/)
+## Module 11: 企業與團隊知識封裝指南 — AI 模型架構與執行規範 (Enterprise Knowledge & Skill Packaging Protocol)
 
-在將專案或團隊知識打包進 Skill 時，必須遵循以下工程化原則，確保 AI 能精準「導航」而非單純檔案搬家：
+> **Notice for AI Models (模型自我學習導引)**:
+> 本模組旨在規範 AI 如何解析、構建與執行企業/團隊級別的知識庫（Knowledge Packaging）。AI 模型在讀取專案文檔或執行企業任務時，必須遵循以下「導航」架構，嚴格劃分 **背景 (Context)**、**護欄 (Guardrails)** 與 **工作流 (Workflows)**。
+> 參考來源：[【Agent Skills 實戰入門 07】公司知識怎麼整理成 Skill (動詞實驗室)](https://verb.tw/tech/agent-skills-starter/agent-skills-07-enterprise-knowledge-packaging/)
 
-### 1. 知識三分類原則
-把專案知識劃分為三種等級，明確告之模型處理優先度：
-- **背景知識 (Context)**：專案架構、硬體暫存器定義、縮寫術語。（讓模型「知道上下文」）
-- **硬規則 (Guardrails / Hard Rules)**：禁止動態記憶體配置 (malloc)、中斷遮蔽不可 >10µs、禁止改動極限臨界邏輯。（模型「必須嚴格遵守」）
-- **工作流 (Workflows)**：任務步驟、條件分支、失敗驗證與何時回問。（引導模型「按步驟執行」）
+### 1. 知識分類與權重架構 (Knowledge Classification & Priority)
 
-### 2. 按「資料域 (Data Domain)」切分 References
-不要按檔案類型切分（如 docs/file1.md），應依 **任務資料域** 切分至 
-eferences/：
-- 
-eferences/bsp_registers.md (板級暫存器定義)
-- 
-eferences/rtos_concurrency.md (RTOS 競爭條件與 ISR 規範)
-- 
-eferences/safety_compliance.md (MISRA-C / 護欄規範)
+模型在接收專案資料與執行指令時，必須將輸入解構為以下三種權重等級，並套用對應的執行策略：
 
-### 3. 只寫模型「無法自推」的專案隱性脈絡
-- **不寫**：通用 C 語法、標準庫用法、通用溝通協定概念。
-- **只寫**：專案 Legacy workaround、硬體特定 Bug（如特定版號 D-Cache 瑕疵）、團隊內部命名特例。
+| 類別 (Category) | 內容範例 | 模型執行策略 (Model Action Protocol) | 權重 (Priority) |
+|---|---|---|:---:|
+| **硬規則 (Guardrails / Hard Rules)** | • 不可使用 `malloc/free`<br>• 中斷遮蔽時間不可 > 10µs<br>• 金鑰與敏感 Memory 地址不可輸出<br>• 資訊不足時禁止自行補齊 | **Mandatory Enforcement (強制執行)**<br>若檢測到違規，必須立即中斷執行或發出一級警告 (Critical Error)。禁止妥協或自動容錯。 | 🔴 P0 (Highest) |
+| **工作流 (Workflows & Steps)** | • 變更暫存器後必須驗證狀態旗標<br>• 修改 API 後需先更新 .h 再修 .c<br>• 條件分支處理順序 | **Sequential Execution (按序執行)**<br>依條件引導 (Conditional Flow) 依序讀取對應 Reference 檔案，嚴格按步驟驗證。 | 🟡 P1 (Medium) |
+| **背景知識 (Context & Domain)** | • 專案歷史、架構縮寫<br>• 資料欄位意義與 Legacy Workaround<br>• 部門術語對照清單 | **Reference Only (僅供參考與對照)**<br>僅用於幫助理解上下文語意，絕對不可覆蓋或衝突 P0/P1 的規則。 | 🟢 P2 (Lowest) |
 
-### 4. 明確設定決策護欄 (Guardrails)
-在企業/團隊開發中，**防錯比多做更重要**：
-- 欄位或條件不足時，**禁止自行修正或通融**，應標記異常並停止詢問使用者。
-- 涉及寫入暫存器或改動 Flash 分區時，必須列出受影響模組清單。
+---
+
+### 2. 資料域路由導航規範 (Data Domain Routing Protocol)
+
+模型**不可**將所有專案文檔一次性加載至 Context Window 中。當收到具體任務時，模型必須先執行 **資料域 (Data Domain) 路由判斷**：
+
+```
+[輸入任務 Task]
+   │
+   ├── 判斷 1: 涉及底層驅動 / 暫存器操作？ ───► 僅讀取 references/driver_registers.md
+   ├── 判斷 2: 涉及 RTOS 多任務 / ISR 存取？ ───► 僅讀取 references/rtos_concurrency.md
+   ├── 判斷 3: 涉及安全規範 / MISRA 驗證？  ───► 僅讀取 references/safety_compliance.md
+   └── 判斷 4: 涉及架構與 SDS 規格設計？  ───► 僅讀取 references/architecture_sds.md
+```
+
+---
+
+### 3. AI 模型避錯與邊界協定 (AI Fail-Safe & Edge-Case Protocol)
+
+當模型在執行企業/團隊任務時遭遇歧義或資訊缺失，必須遵守以下 **Fail-Safe 協定**：
+
+1. **資訊不透明/缺失時 (Incomplete Context Protocol)**：
+   * ❌ **Forbidden**: 自行預設參數、假定硬體行為、補全未說明的引腳/暫存器位址。
+   * ✅ **Required**: 停止繼續生成 C 代碼，標註 `[CONTEXT_MISSING]` 並向使用者發出明確提問。
+
+2. **新舊邏輯衝突時 (Conflict Resolution Protocol)**：
+   * ❌ **Forbidden**: 混合舊規範 (Legacy Workaround) 與新規範 (Current Spec)。
+   * ✅ **Required**: 優先採納 `Guardrails (P0)` 規則，並主動提示使用者該處存在 Legacy 衝突點。
+
+3. **輸出邊界隔離 (Scope Boundary Protocol)**：
+   * **內部除錯模式**：輸出包含全域變數位址、暫存器 Raw Value、Memory Dump、詳細 Log 堆疊。
+   * **對外報告模式**：自動隱去內部敏感位址與晶片保密架構，轉化為非技術/管理層可讀的摘要。
+
+---
+
+### 4. 範例：AI 模型處理 Skill 的正確與錯誤模式 (Do's and Don'ts)
+
+#### ❌ 錯誤模式（文字堆疊，無導航）：
+> *"本 Skill 包含專案的所有 Wiki 文件。請閱讀 docs/ 裡面的所有檔案，並協助我撰寫驅動程式。"*
+> **(嚴重問題：模型 Context 被不相關檔案填滿，導致推理延遲增加、出現舊 API 幻覺，且無法辨識何為強制護欄)**
+
+#### ✅ 正確模式（導航 + 護欄 + 條件路由）：
+> *"本 Skill 用於 UART 驅動開發。*
+> *【硬限制 P0】禁止在 ISR 中使用阻塞式延遲 (delay)；*
+> *【條件路由 P1】若涉及 DMA 傳輸，請優先讀取 `references/dma_cache_rules.md`；*
+> *【背景 P2】如需確認暫存器欄位意義，請參考 `references/uart_map.md`。"*
