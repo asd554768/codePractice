@@ -22,11 +22,12 @@ description: >
 
 ## 📖 建議下次閱讀順序 (Suggested Reading Order for AI)
 > 如果你是剛接手這個專案的 AI，強烈建議按照以下順序閱讀此文件，以便最快進入狀況：
-> 1. **[十、後續功能規劃與研究方向](#十後續功能規劃與研究方向)**：特別是 **10.7 尚未完成清單 (TODO)**，這是你當前的首要任務目標。
-> 2. **[九、更新歷程 (Changelog)](#九更新歷程-changelog)**：了解前幾個 Session 已經完成的事項（包含後端分離、PacketLogger 實作與各種 Bug 修復），避免重複造輪子。
-> 3. **[一、專案目的與架構概述](#一專案目的與架構概述)**：快速掌握重構後的專案目錄結構與職責劃分（`BusHound.py` 與 `backend_storage.py`）。
-> 4. **[四、VUC (64-byte) 實務流程解析](#四vuc-64-byte-實務流程解析)**：若你的任務涉及發送 SCSI 或 NVMe 實體指令，請務必了解其通訊與上鎖機制。
-> 5. 若有打包需求，再閱讀 **[八、打包成 EXE](#八打包成-exepyinstaller-指南)**。
+> 1. **⚠️【強制規範】每次修改/更新程式碼後，必須執行單元測試**：`python -m unittest discover -s tests -p "test_*.py"` 確保所有測試 PASS。
+> 2. **[十、後續功能規劃與研究方向](#十後續功能規劃與研究方向)**：特別是 **10.7 尚未完成清單 (TODO)**，這是你當前的首要任務目標。
+> 3. **[九、更新歷程 (Changelog)](#九更新歷程-changelog)**：了解前幾個 Session 已經完成的事項（包含後端分離、PacketLogger 實作與各種 Bug 修復），避免重複造輪子。
+> 4. **[一、專案目的與架構概述](#一專案目的與架構概述)**：快速掌握專案目錄結構與職責劃分（`BusHound.py`、`backend_storage.py`、`test_backend.py`、`test_gui.py`）。
+> 5. **[四、VUC (64-byte) 實務流程解析](#四vuc-64-byte-實務流程解析)**：若你的任務涉及發送 SCSI 或 NVMe 實體指令，請務必了解其通訊與上鎖機制。
+> 6. 若有打包需求，再閱讀 **[八、打包成 EXE](#八打包成-exepyinstaller-指南)**。
 
 
 ## 一、專案目的與架構概述
@@ -41,9 +42,17 @@ description: >
 **檔案結構（目前）**：
 ```
 BusHound/
-  BusHound.py      # 主程式（644 行），GUI + SCSI 邏輯全在此
+  src/
+    BusHound.py        # 主程式，純 GUI 邏輯
+    backend_storage.py # 後端存取核心（IOCTL, SCSI Pass-Through, 協定解析, PacketLogger）
+    __init__.py
+  tests/
+    test_backend.py    # 後端單元測試套件（23 項測試）
+    test_gui.py        # GUI 邏輯與安全邊界單元測試（5 項測試）
+    __init__.py
   AP_Key/
-    ap_key.bin     # (執行時動態需要) AP_KEY 認證金鑰二進位檔，需自行放置
+    ap_key.bin         # (執行時動態需要) AP_KEY 認證金鑰二進位檔，需自行放置
+  SKILL.md             # 專案知識庫與開發手冊（本文件）
 ```
 
 ---
@@ -248,6 +257,10 @@ Windows 驅動在 64-bit OS 要求 `SCSI_PASS_THROUGH_DIRECT` 有特定 alignmen
 
 ## 七、重要注意事項（給 AI 的 checklist）
 
+- [ ] **⚠️【強制規範】更新程式碼後，必須執行單元測試確認全數通過：**
+  ```powershell
+  python -m unittest discover -s tests -p "test_*.py"
+  ```
 - [ ] 必須以 Admin 執行，程式已內建 UAC 提權
 - [ ] 操作 PhysicalDrive Write 有資料損毀風險，修改前確認
 - [ ] FSCTL_LOCK_VOLUME 失敗目前只警告不中止，需注意
@@ -280,11 +293,11 @@ pip install pyinstaller
 ### 打包指令
 
 ```powershell
-# 切換到 BusHound.py 所在目錄
+# 切換到專案根目錄
 cd "C:\Users\asd55\OneDrive\桌面\code\myGit\codePractice\Python_Tool\BusHound"
 
-# 打包（單一 EXE，無 CMD 視窗，含版本圖示）
-pyinstaller --onefile --windowed --name BusHound BusHound.py
+# 打包（單一 EXE，無 CMD 視窗，加入 src 模組搜尋路徑）
+pyinstaller --onefile --windowed --paths src --name BusHound src/BusHound.py
 ```
 
 **關鍵旗標說明**：
@@ -293,11 +306,12 @@ pyinstaller --onefile --windowed --name BusHound BusHound.py
 |---|---|
 | `--onefile` | 所有檔案壓縮成單一 `.exe`，方便散布 |
 | `--windowed` / `--noconsole` | **不跳出 CMD 黑視窗**（兩者等效，擇一即可） |
+| `--paths src` | **指定模組搜尋路徑**（確保 `backend_storage.py` 被納入打包） |
 | `--name BusHound` | 輸出 EXE 名稱 |
 
 **加入圖示（可選）**：
 ```powershell
-pyinstaller --onefile --windowed --name BusHound --icon icon.ico BusHound.py
+pyinstaller --onefile --windowed --paths src --name BusHound --icon icon.ico src/BusHound.py
 ```
 
 ### 輸出目錄結構
@@ -507,7 +521,77 @@ BusHound/
 
 ---
 
-## 十、後續功能規劃與研究方向
+### 2026-08-15 Session 5 — PowerShell 磁碟列舉修復 & drive_label 補齊（Antigravity / Claude Sonnet 4.6）
+
+#### 分析過程
+1. 重新完整閱讀 `BusHound.py`（493 行）與 `backend_storage.py`（353 行）
+2. 使用 `python -m py_compile` 靜態語法檢查，發現 `SyntaxWarning: invalid escape sequence '\.'`
+3. 實際執行 PowerShell 命令驗證：原始指令語法錯誤，修正後成功輸出磁碟列表
+4. 確認 Session 4 留下的 `drive_label` TODO 尚未完成，本次一併補齊
+
+#### 已修復
+
+**BUG-6：`get_physical_drives()` 的 PowerShell 指令語法錯誤（backend_storage.py L144）**
+- **根本原因（雙層問題）**：
+  1. Python 層：字串 `"\.Index"` 中的 `\.` 是 Python 無效 escape sequence（SyntaxWarning），Python 實際傳給 shell 的字串是 `.Index, .Model`（反斜線被丟棄）
+  2. PowerShell 層：收到 `.Index, .Model` 無法識別（需要 `$_.Index`），拋出 `ParserError`，subprocess 靜默失敗 → `get_physical_drives()` 進入 `except` 回傳 fallback `["PhysicalDrive0"..."PhysicalDrive7"]`，磁碟型號完全消失
+- **症狀**：下拉選單只顯示 `PhysicalDrive0`~`PhysicalDrive7`，沒有型號資訊（`- CT500MX500SSD1` 等）
+- **修正**：`\.Index, \.Model` → `$_.Index, $_.Model`
+- **驗證**：直接執行修正後的 PowerShell 指令，成功輸出 `1:::CT500MX500SSD1`、`2:::INTEL SSDPEKNU512GZ`、`0:::SATA SSD`
+
+**drive_label 補齊（BusHound.py，7 處）**
+- **背景**：Session 4 新增 `PacketLogger` 時，`send_scsi_command()` 加了 `drive_label="?"` 可選參數，但所有 GUI 呼叫端都沒有傳入，導致 PacketLogger 記錄的 `drive` 欄位永遠是 `"?"`
+- **修正位置**（7 處）：
+  - Tab 1 `t1_execute()`：L164 補 `drive_label=f"PhysicalDrive{dnum}"`
+  - Tab 2 `t2_execute()` AP_KEY 序列：L391（cmd1）、L396（cmd2）、L401（cmd3）
+  - Tab 2 `t2_execute()` VUC 序列：L426（VUC1）、L456（VUC2）、L470（VUC3）
+- **變數名稱注意**：Tab 1 用 `dnum`，Tab 2 用 `drive_num`，兩者均直接來自 `drive_combo.get()` 解析
+
+#### 本次修改檔案
+- `backend_storage.py`：L143~144，修復 PowerShell `$_` 變數語法
+- `BusHound.py`：7 處 `send_scsi_command()` 呼叫補上 `drive_label`
+- `SKILL.md`（本文件）：新增 Session 5 changelog + 更新 TODO 狀態
+
+---
+
+### 2026-08-15 Session 6 — 目錄分類重構、單元測試套件建置與打包路徑修復（Antigravity / Gemini 3.7 Flash & Claude Sonnet 4.6）
+
+#### 完成項目與分析
+
+1. **目錄結構分類重構**：
+   - 建立 `src/` 資料夾：移入 `BusHound.py`、`backend_storage.py`、`__init__.py`。
+   - 建立 `tests/` 資料夾：移入 `test_backend.py`、`test_gui.py`、`__init__.py`。
+   - 建立 `AP_Key/` 資料夾供放置認證金鑰。
+   - 測試檔案頂部加入 `sys.path.insert(0, ...)` 指向 `../src`，確保任意目錄執行皆能正確 import。
+
+2. **完整單元測試套件建置（28 項測試全數 PASS）**：
+   - [`tests/test_backend.py`](file:///c:/Users/asd55/OneDrive/桌面/code/myGit/codePractice/Python_Tool/BusHound/tests/test_backend.py)：涵蓋 ctypes 結構體大小、CDB / Sense Data 解析、hexdump 格式化、Win32 錯誤碼解析、PowerShell 磁碟列舉 mock、PacketLogger 記錄/Callback/CSV 匯出、以及 Mock `DeviceIoControl` 傳輸與磁碟鎖定（23 項測試）。
+   - [`tests/test_gui.py`](file:///c:/Users/asd55/OneDrive/桌面/code/myGit/codePractice/Python_Tool/BusHound/tests/test_gui.py)：涵蓋 16-Byte / 64-Byte 矩陣清空、Offset 40~43 長度自動計算確認/略過、以及超大長度 (> 256MB) 安全上限攔截（5 項測試）。
+   - **強制規範確立**：於 `SKILL.md` 確立「每次修改程式碼後必須執行單元測試」規範。
+
+3. **重要修復：`SCSI_PASS_THROUGH_DIRECT` 記憶體對齊修正**：
+   - **問題**：`backend_storage.py` 原設定 `_pack_ = 4` 導致 64-bit 指標強制被 4-byte 對齊，結構體大小變為 48 Bytes 且 `DataBuffer` 偏移量錯誤 (offset 20)。
+   - **修復**：移除 `_pack_ = 4`，恢復 64-bit Windows WDK 自然 8-byte 對齊，結構體大小為 56 Bytes，`DataBuffer` 正確對齊 offset 24。
+
+4. **PyInstaller 打包 Bug 修復（ModuleNotFoundError: backend_storage）**：
+   - **根本原因**：目錄拆分為 `src/` 後，PyInstaller 在根目錄執行時預設未將 `src/` 納入搜尋路徑，且 `BusHound.py` 未將同層目錄注入 `sys.path`，導致 `backend_storage.py` 未被包入 EXE 內部。
+   - **修復措施**：
+     - `src/BusHound.py` 頂部加入 `_current_dir` 自動注入 `sys.path`。
+     - 打包指令加入 `--paths src` 旗標：`pyinstaller --onefile --windowed --paths src --name BusHound src/BusHound.py`。
+     - UAC 提權在 frozen 模式下避免傳入無效 script 參數 (`params = None if getattr(sys, 'frozen', False) else ...`)。
+   - **產出物更新**：成功重新生成 `dist/BusHound.exe` 並更新至 `BusHound.7z`。
+
+#### 本次修改檔案
+- `src/BusHound.py`：加入 `_current_dir` 至 `sys.path`、優化 frozen 模式 UAC 入口點
+- `src/backend_storage.py`：移除 `_pack_ = 4` 修正 64-bit 結構體對齊
+- `tests/test_backend.py`：建立後端單元測試套件
+- `tests/test_gui.py`：建立 GUI 邏輯單元測試套件
+- `dist/BusHound.exe` & `BusHound.7z`：重新封裝並更新無黑視窗版本
+- `SKILL.md`：記錄 Session 6 Changelog、更新目錄結構、測試指令與打包指令
+
+---
+
+
 
 > 下次 AI 接手時，請先讀此節，從「尚未完成」清單挑選目標繼續。
 
@@ -588,23 +672,31 @@ BusHound/
 - **GUI 規劃**：新增 Tab 4「NVMe Admin Cmd」，含預設按鈕直接填入 Opcode 參數
 - **參考來源**：`smartmontools` 的 `os_win32.cpp` 是 Windows 上 NVMe IOCTL 最完整的開源 C 參考實作
 
-### 10.6 單元測試（Unit Tests）規劃
+### 10.6 單元測試（Unit Tests）架構與實作
 
-- **測試檔案**：`test_backend.py`（使用 Python 內建 `unittest`）
-- **測試項目**：
-  1. `test_decode_cdb_known_opcodes()`：驗證已知 Opcode 解析正確
-  2. `test_decode_cdb_vuc()`：驗證 VUC 0x06/0xFE/0xC0~0xC3 識別正確
-  3. `test_parse_sense_data_valid()`：餵合法 Sense bytes，驗證 Sense Key / ASC / ASCQ
-  4. `test_parse_sense_data_too_short()`：餵 < 14 bytes，確認回傳「無有效」訊息
-  5. `test_structure_size()`：`ctypes.sizeof(SCSI_PASS_THROUGH_DIRECT)` 驗證符合預期值（Windows 64-bit = 56 bytes）
-  6. `test_packet_logger_basic()`：驗證 PacketLogger 能正確記錄、清除、計數
+目前已實作完整的單元測試套件（基於 Python 內建 `unittest`），無須額外安裝 pytest 等第三方套件：
+
+1. **後端核心測試 [`test_backend.py`](file:///c:/Users/asd55/OneDrive/桌面/code/myGit/codePractice/Python_Tool/BusHound/test_backend.py)** (共 23 項測試):
+   - `TestCtypesStructures`：驗證 64-bit Windows 下 `SCSI_PASS_THROUGH_DIRECT` (56 Bytes) 與 `SENSE_DATA_BUFFER` (24 Bytes) 大小與 8-byte 指標自然對齊。
+   - `TestProtocolParsing`：驗證標準 SCSI Opcode 解析、VUC (0x06/0xFE/0xC0~0xC3) 解析、Sense Data (0x70/0x71, Sense Key, ASC/ASCQ) 解析與異常長度保護。
+   - `TestHelpers`：驗證 `hexdump` 格式化、`get_win_error_msg` Win32 錯誤轉換、`get_base_dir` 路徑解析，以及 mock PowerShell 磁碟列舉成功與 fallback。
+   - `TestPacketLogger`：驗證記錄器開關、記錄格式、GUI Callback 機制、CSV 匯出與清除功能。
+   - `TestScsiIoControl`：Mock Win32 `DeviceIoControl` 驗證 Pass-Through 成功、失敗 OSError 拋出、以及磁碟鎖定/解鎖 `FSCTL_LOCK_VOLUME`。
+
+2. **GUI 狀態測試 [`test_gui.py`](file:///c:/Users/asd55/OneDrive/桌面/code/myGit/codePractice/Python_Tool/BusHound/test_gui.py)** (共 5 項測試):
+   - `TestGuiLogic`：驗證 Tab 1 / Tab 2 矩陣清空、64-Byte VUC Offset 40~43 長度自動計算與使用者確認/略過邏輯、超大長度 (> 256MB) 安全上限攔截。
+
+**執行所有測試指令**：
+```powershell
+python -m unittest discover -s tests -p "test_*.py"
+```
 
 ### 10.7 尚未完成清單（給下一個 AI 的 TODO）
 
 - `[ ]` Tab 3 Packet Sniffer GUI 實作（整合 PacketLogger 顯示）
-- `[ ]` BusHound.py Tab1 / Tab2 的 `send_scsi_command()` 呼叫補上 `drive_label` 參數
+- `[x]` BusHound.py Tab1 / Tab2 的 `send_scsi_command()` 呼叫補上 `drive_label` 參數（Session 5 完成）
+- `[x]` `test_backend.py` / `test_gui.py` 單元測試建置（28 項測試全數通過）
 - `[ ]` ETW Storport 整合（Phase 2，可先用 `pywintrace`）
 - `[ ]` frida hook 整合（Phase 3，選用）
 - `[ ]` NVMe Admin Cmd Tab 4 實作（Identify + SMART）
-- `[ ]` `test_backend.py` 單元測試建置
 - `[ ]` 打包指令更新：需將 `backend_storage.py` 一起納入（`--onefile` 模式會自動處理，`--onedir` 需確認）

@@ -1,0 +1,16 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller build outputs and intermediate files
+build/
+dist/
+*.spec
+*.exe
+
+# AP Key sensitive binaries (keep folder structure)
+AP_Key/*.bin
+
+# Explicitly track 7z archive
+!BusHound.7z

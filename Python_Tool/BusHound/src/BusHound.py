@@ -1,10 +1,16 @@
 import sys
+import os
+
+# 確保同目錄模組 (如 backend_storage) 能被正常載入
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+if _current_dir not in sys.path:
+    sys.path.insert(0, _current_dir)
+
 import ctypes
 from ctypes import wintypes
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import subprocess
-import os
 
 from backend_storage import *  # 所有後端邏輯集中於 backend_storage.py
 
@@ -161,7 +167,7 @@ class ScsiToolGUI:
             self.t1_log(f">>> 發送指令: {decoded_cmd}")
             self.t1_log(f"    (Length: {length} Bytes)")
             
-            st, data, sense = send_scsi_command(handle, cdb, length, self.t1_dir_var.get(), out_b)
+            st, data, sense = send_scsi_command(handle, cdb, length, self.t1_dir_var.get(), out_b, drive_label=f"PhysicalDrive{dnum}")
             
             # --- 解析並顯示狀態與錯誤 ---
             st_str = SCSI_STATUS_DICT.get(st, "UNKNOWN STATUS")
@@ -388,17 +394,17 @@ class ScsiToolGUI:
 
                 cdb1 = [0x06, 0xfe, 0xc0, 0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
                 self.t2_log(f" -> [AP_KEY 1/3] {decode_cdb(cdb1)}")
-                st1, _, sense1 = send_scsi_command(handle, cdb1, 512, SCSI_IOCTL_DATA_OUT, list(ap_key_data))
+                st1, _, sense1 = send_scsi_command(handle, cdb1, 512, SCSI_IOCTL_DATA_OUT, list(ap_key_data), drive_label=f"PhysicalDrive{drive_num}")
                 if st1 != 0: return self.t2_log_error("序列 1", st1, sense1)
 
                 cdb2 = [0x06, 0xfe, 0xc1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
                 self.t2_log(f" -> [AP_KEY 2/3] {decode_cdb(cdb2)}")
-                st2, _, sense2 = send_scsi_command(handle, cdb2, 0, SCSI_IOCTL_DATA_UNSPECIFIED, None)
+                st2, _, sense2 = send_scsi_command(handle, cdb2, 0, SCSI_IOCTL_DATA_UNSPECIFIED, None, drive_label=f"PhysicalDrive{drive_num}")
                 if st2 != 0: return self.t2_log_error("序列 2", st2, sense2)
 
                 cdb3 = [0x06, 0xfe, 0xc3, 0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
                 self.t2_log(f" -> [AP_KEY 3/3] {decode_cdb(cdb3)}")
-                st3, _, sense3 = send_scsi_command(handle, cdb3, 512, SCSI_IOCTL_DATA_IN, None)
+                st3, _, sense3 = send_scsi_command(handle, cdb3, 512, SCSI_IOCTL_DATA_IN, None, drive_label=f"PhysicalDrive{drive_num}")
                 if st3 != 0: return self.t2_log_error("序列 3", st3, sense3)
 
                 self.t2_log("[AP_KEY Auth] 解鎖成功，硬碟進入特權模式！")
@@ -423,7 +429,7 @@ class ScsiToolGUI:
             if len(vuc1_payload) < 512:
                 vuc1_payload += [0] * (512 - len(vuc1_payload))
                 
-            st_vuc1, _, sense_vuc1 = send_scsi_command(handle, vuc_cdb1, 512, SCSI_IOCTL_DATA_OUT, vuc1_payload)
+            st_vuc1, _, sense_vuc1 = send_scsi_command(handle, vuc_cdb1, 512, SCSI_IOCTL_DATA_OUT, vuc1_payload, drive_label=f"PhysicalDrive{drive_num}")
             if st_vuc1 != 0: return self.t2_log_error("VUC 1 (配置指令)", st_vuc1, sense_vuc1)
 
             sectors = (length + 511) // 512 if length > 0 else 0
@@ -453,7 +459,7 @@ class ScsiToolGUI:
                 if len(out_b) < length: out_b += [0]*(length-len(out_b))
                 out_b = out_b[:length]
 
-            st_vuc2, data_vuc2, sense_vuc2 = send_scsi_command(handle, vuc_cdb2, length, direction, out_b)
+            st_vuc2, data_vuc2, sense_vuc2 = send_scsi_command(handle, vuc_cdb2, length, direction, out_b, drive_label=f"PhysicalDrive{drive_num}")
             if st_vuc2 != 0: return self.t2_log_error("VUC 2 (資料傳輸)", st_vuc2, sense_vuc2)
             
             if direction == SCSI_IOCTL_DATA_IN and length > 0:
@@ -467,7 +473,7 @@ class ScsiToolGUI:
                 self.t2_log("    (No-Data 指令執行成功)\n")
 
             vuc_cdb3 = [0x06, 0xfe, 0xc3, 0x00, 0x01, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-            st_vuc3, data_vuc3, sense_vuc3 = send_scsi_command(handle, vuc_cdb3, 512, SCSI_IOCTL_DATA_IN, None)
+            st_vuc3, data_vuc3, sense_vuc3 = send_scsi_command(handle, vuc_cdb3, 512, SCSI_IOCTL_DATA_IN, None, drive_label=f"PhysicalDrive{drive_num}")
             if st_vuc3 != 0: return self.t2_log_error("VUC 3 (狀態讀取)", st_vuc3, sense_vuc3)
             
             self.t2_log("[VUC Sequence] 全部指令序列執行成功！")
@@ -488,5 +494,6 @@ if __name__ == "__main__":
         app = ScsiToolGUI(root)
         root.mainloop()
     else:
-        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, f'"{__file__}"', None, 1)
+        params = None if getattr(sys, 'frozen', False) else f'"{__file__}"'
+        ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
         sys.exit()

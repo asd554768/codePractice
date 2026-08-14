@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 import ctypes
 from ctypes import wintypes
 import subprocess
@@ -51,7 +51,6 @@ def get_win_error_msg(code):
 # ctypes 結構體
 # ---------------------------------------------------------------------------
 class SCSI_PASS_THROUGH_DIRECT(ctypes.Structure):
-    _pack_ = 4
     _fields_ = [
         ("Length",             wintypes.USHORT),
         ("ScsiStatus",         ctypes.c_ubyte),
@@ -141,7 +140,7 @@ def get_physical_drives():
     drives = []
     try:
         cmd = ['powershell', '-NoProfile', '-Command',
-               "Get-CimInstance Win32_DiskDrive | ForEach-Object { '{0}:::{1}' -f \.Index, \.Model }"]
+               "Get-CimInstance Win32_DiskDrive | ForEach-Object { '{0}:::{1}' -f $_.Index, $_.Model }"]
         result = subprocess.run(cmd, capture_output=True, text=True, creationflags=0x08000000)
         for line in result.stdout.splitlines():
             if ":::" in line:
