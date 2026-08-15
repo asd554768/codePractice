@@ -85,6 +85,64 @@ class TestGuiLogic(unittest.TestCase):
         # 超出上限應略過自動填入
         self.assertEqual(self.gui.t2_len_entry.get(), "0")
 
+    def test_tab3_sniffer_toggle(self):
+        # 初始狀態為啟動 (Recording)
+        from backend_storage import packet_logger
+        self.assertTrue(packet_logger.is_enabled)
+
+        # 切換停止
+        self.gui.t3_toggle_sniffer()
+        self.assertFalse(packet_logger.is_enabled)
+        self.assertIn("啟動監控", self.gui.t3_toggle_btn.cget("text"))
+
+        # 再次切換啟動
+        self.gui.t3_toggle_sniffer()
+        self.assertTrue(packet_logger.is_enabled)
+        self.assertIn("停止監控", self.gui.t3_toggle_btn.cget("text"))
+
+    def test_tab3_packet_insert_and_select(self):
+        # 清空
+        self.gui.t3_clear_packets()
+        self.assertEqual(len(self.gui.t3_tree.get_children()), 0)
+
+        # 模擬新封包進入
+        rec = {
+            "index": 1,
+            "timestamp": "12:00:00.123",
+            "drive": "PhysicalDrive0",
+            "direction": "IN",
+            "cdb_hex": "12 00 00 00 24 00",
+            "cmd_name": "[INQUIRY (0x12)]",
+            "data_len": 36,
+            "payload_hex": "00 80 02 02",
+            "scsi_status": "0x00 - GOOD",
+            "sense_str": "(none)",
+            "elapsed_ms": "1.23",
+            "raw_payload": b"\x00\x80\x02\x02" + b"\x00"*32,
+            "raw_cdb": b"\x12\x00\x00\x00\x24\x00",
+            "raw_sense": b""
+        }
+        self.gui.t3_on_new_packet(rec)
+
+        # 驗證 Treeview 有 1 筆資料
+        children = self.gui.t3_tree.get_children()
+        self.assertEqual(len(children), 1)
+
+        # 選取該封包
+        self.gui.t3_tree.selection_set(children[0])
+        self.gui.t3_on_select_packet(None)
+
+        # 驗證下方 Inspector 內容
+        cdb_txt = self.gui.t3_cdb_txt.get(1.0, tk.END)
+        self.assertIn("12 00 00 00 24 00", cdb_txt)
+        dump_txt = self.gui.t3_dump_txt.get(1.0, tk.END)
+        self.assertIn("00 80 02 02", dump_txt)
+
+    def test_tab3_clear_packets(self):
+        self.gui.t3_clear_packets()
+        self.assertEqual(len(self.gui.t3_tree.get_children()), 0)
+        self.assertEqual(self.gui.t3_count_lbl.cget("text"), "總封包數: 0")
+
 
 if __name__ == "__main__":
     unittest.main()

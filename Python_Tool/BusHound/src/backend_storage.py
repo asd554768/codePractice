@@ -150,14 +150,26 @@ def get_physical_drives():
         pass
     return drives if drives else [f"PhysicalDrive{i}" for i in range(8)]
 
-def hexdump(src, length=16):
-    if not src: return ""
+def hexdump(src, length=16, show_header=True):
+    """
+    標準專業 Hexdump 格式化：
+    1. 包含 Offset 與 00~0F 欄位標題 (可選)
+    2. 8-Byte 分組間隔，直觀辨識偏移量
+    3. ASCII 欄位以 |...| 包裹並嚴格邊界對齊
+    """
+    if not src:
+        return ""
     result = []
+    if show_header and length == 16:
+        result.append("Offset  00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F   ASCII")
+        result.append("------  -----------------------  -----------------------  |----------------|")
+
     for i in range(0, len(src), length):
-        chunk   = src[i:i + length]
-        hex_str = ' '.join(f'{b:02X}' for b in chunk)
-        asc_str = ''.join(chr(b) if 0x20 <= b < 0x7F else '.' for b in chunk)
-        result.append(f"{i:04X}   {hex_str:<{length * 3}}   {asc_str}")
+        chunk = src[i:i + length]
+        h1 = ' '.join(f'{b:02X}' for b in chunk[:8])
+        h2 = ' '.join(f'{b:02X}' for b in chunk[8:])
+        asc = ''.join(chr(b) if 0x20 <= b < 0x7F else '.' for b in chunk)
+        result.append(f"{i:04X}    {h1:<23}  {h2:<23}  |{asc:<16}|")
     return '\n'.join(result)
 
 # ---------------------------------------------------------------------------
@@ -213,6 +225,9 @@ class PacketLogger:
                 "scsi_status": f"0x{scsi_status:02X} - {SCSI_STATUS_DICT.get(scsi_status, 'UNKNOWN')}",
                 "sense_str":   parse_sense_data(sense_bytes) if sense_bytes else "(none)",
                 "elapsed_ms":  f"{elapsed_ms:.2f}",
+                "raw_payload": bytes(pay_bytes),
+                "raw_cdb":     bytes(cdb_bytes),
+                "raw_sense":   bytes(sense_bytes),
             }
             self._records.append(rec)
         # callback 在 lock 外呼叫
@@ -238,7 +253,7 @@ class PacketLogger:
         fields = ["index","timestamp","drive","direction","cdb_hex","cmd_name",
                   "data_len","payload_hex","scsi_status","sense_str","elapsed_ms"]
         with open(filepath, 'w', newline='', encoding='utf-8-sig') as f:
-            writer = csv.DictWriter(f, fieldnames=fields)
+            writer = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
             writer.writeheader()
             writer.writerows(records)
         return len(records)

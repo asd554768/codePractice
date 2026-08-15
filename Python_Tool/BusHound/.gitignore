@@ -14,3 +14,15 @@ AP_Key/*.bin
 
 # Explicitly track 7z archive
 !BusHound.7z
+
+# Node modules
+node_modules/
+package.json
+package-lock.json
+
+# Image assets and screenshots
+assets/
+*.png
+*.jpg
+*.jpeg
+

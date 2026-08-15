@@ -28,12 +28,15 @@ class ScsiToolGUI:
         
         self.tab1 = ttk.Frame(self.notebook)
         self.tab2 = ttk.Frame(self.notebook)
+        self.tab3 = ttk.Frame(self.notebook)
         
         self.notebook.add(self.tab1, text=" SCSI Command (16-Byte) ")
         self.notebook.add(self.tab2, text=" Vendor/Ext Command (64-Byte VUC) ")
+        self.notebook.add(self.tab3, text=" Packet Sniffer (即時封包監控) ")
         
         self.init_tab1_scsi()
         self.init_tab2_64byte()
+        self.init_tab3_sniffer()
 
     def create_global_header(self):
         header_frame = tk.LabelFrame(self.root, text="Global Settings", padx=10, pady=5)
@@ -113,11 +116,19 @@ class ScsiToolGUI:
 
         out_f = tk.Frame(self.tab1)
         out_f.pack(fill=tk.BOTH, expand=True)
-        sb = tk.Scrollbar(out_f)
-        sb.pack(side=tk.RIGHT, fill=tk.Y)
-        self.t1_out = tk.Text(out_f, font=("Consolas", 10), bg="#1E1E1E", fg="#D4D4D4", yscrollcommand=sb.set)
-        self.t1_out.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb.config(command=self.t1_out.yview)
+        sb_y = tk.Scrollbar(out_f, orient=tk.VERTICAL)
+        sb_x = tk.Scrollbar(out_f, orient=tk.HORIZONTAL)
+        self.t1_out = tk.Text(
+            out_f, font=("Consolas", 10), bg="#1E1E1E", fg="#D4D4D4",
+            wrap=tk.NONE, yscrollcommand=sb_y.set, xscrollcommand=sb_x.set
+        )
+        self.t1_out.grid(row=0, column=0, sticky="nsew")
+        sb_y.grid(row=0, column=1, sticky="ns")
+        sb_x.grid(row=1, column=0, sticky="ew")
+        out_f.grid_rowconfigure(0, weight=1)
+        out_f.grid_columnconfigure(0, weight=1)
+        sb_y.config(command=self.t1_out.yview)
+        sb_x.config(command=self.t1_out.xview)
 
     # Tab 1 Methods 
     def t1_load_cdb(self):
@@ -253,11 +264,19 @@ class ScsiToolGUI:
 
         out_f = tk.Frame(self.tab2, padx=10, pady=5)
         out_f.pack(fill=tk.BOTH, expand=True)
-        sb = tk.Scrollbar(out_f)
-        sb.pack(side=tk.RIGHT, fill=tk.Y)
-        self.t2_out = tk.Text(out_f, font=("Consolas", 10), bg="#000000", fg="#00FF00", yscrollcommand=sb.set)
-        self.t2_out.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb.config(command=self.t2_out.yview)
+        sb_y = tk.Scrollbar(out_f, orient=tk.VERTICAL)
+        sb_x = tk.Scrollbar(out_f, orient=tk.HORIZONTAL)
+        self.t2_out = tk.Text(
+            out_f, font=("Consolas", 10), bg="#000000", fg="#00FF00",
+            wrap=tk.NONE, yscrollcommand=sb_y.set, xscrollcommand=sb_x.set
+        )
+        self.t2_out.grid(row=0, column=0, sticky="nsew")
+        sb_y.grid(row=0, column=1, sticky="ns")
+        sb_x.grid(row=1, column=0, sticky="ew")
+        out_f.grid_rowconfigure(0, weight=1)
+        out_f.grid_columnconfigure(0, weight=1)
+        sb_y.config(command=self.t2_out.yview)
+        sb_x.config(command=self.t2_out.xview)
 
     def t2_log(self, msg):
         self.t2_out.insert(tk.END, msg + "\n")
@@ -487,6 +506,265 @@ class ScsiToolGUI:
                 if lock_enabled:
                     unlock_drive(handle)
                 close_drive(handle)
+
+    # ==========================================
+    # Tab 3: 即時封包監控 (Packet Sniffer)
+    # ==========================================
+    def init_tab3_sniffer(self):
+        self.t3_auto_scroll = tk.BooleanVar(value=True)
+        self.t3_selected_record = None
+        self.t3_records_map = {}  # index -> rec dict
+
+        # 頂部控制面板
+        ctrl_frame = tk.Frame(self.tab3, pady=6)
+        ctrl_frame.pack(fill=tk.X, padx=10)
+
+        self.t3_toggle_btn = tk.Button(
+            ctrl_frame, text="■ 停止監控 (Stop)", command=self.t3_toggle_sniffer,
+            bg="#D32F2F", fg="white", font=("Arial", 9, "bold"), width=16
+        )
+        self.t3_toggle_btn.pack(side=tk.LEFT, padx=5)
+
+        self.t3_status_lbl = tk.Label(
+            ctrl_frame, text="● 監控錄製中 (Recording)", fg="#2E7D32", font=("Arial", 9, "bold")
+        )
+        self.t3_status_lbl.pack(side=tk.LEFT, padx=10)
+
+        tk.Button(
+            ctrl_frame, text="🗑 清空列表 (Clear)", command=self.t3_clear_packets,
+            bg="#E0E0E0", font=("Arial", 9)
+        ).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(
+            ctrl_frame, text="💾 匯出 CSV (Export)", command=self.t3_export_csv,
+            bg="#1976D2", fg="white", font=("Arial", 9, "bold")
+        ).pack(side=tk.LEFT, padx=5)
+
+        tk.Checkbutton(
+            ctrl_frame, text="自動捲動至最新", variable=self.t3_auto_scroll, font=("Arial", 9)
+        ).pack(side=tk.LEFT, padx=10)
+
+        self.t3_count_lbl = tk.Label(
+            ctrl_frame, text="總封包數: 0", font=("Arial", 9, "bold"), fg="#1565C0"
+        )
+        self.t3_count_lbl.pack(side=tk.RIGHT, padx=10)
+
+        # 中間與底部：垂直分割視窗 (PanedWindow)
+        paned = ttk.PanedWindow(self.tab3, orient=tk.VERTICAL)
+        paned.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # 1. 上半部：封包清單表格 (Treeview，緊湊比例)
+        table_frame = tk.Frame(paned)
+        paned.add(table_frame, weight=1)
+
+        cols = ("idx", "time", "drive", "dir", "cmd", "len", "status", "latency")
+        self.t3_tree = ttk.Treeview(
+            table_frame, columns=cols, show="headings", selectmode="browse", height=6
+        )
+
+        self.t3_tree.heading("idx", text="#")
+        self.t3_tree.heading("time", text="時間 (Time)")
+        self.t3_tree.heading("drive", text="目標磁碟 (Drive)")
+        self.t3_tree.heading("dir", text="方向 (Dir)")
+        self.t3_tree.heading("cmd", text="指令名稱 (Command)")
+        self.t3_tree.heading("len", text="長度 (Bytes)")
+        self.t3_tree.heading("status", text="SCSI 狀態 (Status)")
+        self.t3_tree.heading("latency", text="延遲 (ms)")
+
+        self.t3_tree.column("idx", width=45, anchor="center")
+        self.t3_tree.column("time", width=95, anchor="center")
+        self.t3_tree.column("drive", width=120, anchor="center")
+        self.t3_tree.column("dir", width=55, anchor="center")
+        self.t3_tree.column("cmd", width=250, anchor="w")
+        self.t3_tree.column("len", width=75, anchor="e")
+        self.t3_tree.column("status", width=140, anchor="w")
+        self.t3_tree.column("latency", width=75, anchor="e")
+
+        tree_v_sb = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.t3_tree.yview)
+        tree_h_sb = ttk.Scrollbar(table_frame, orient=tk.HORIZONTAL, command=self.t3_tree.xview)
+        self.t3_tree.configure(yscrollcommand=tree_v_sb.set, xscrollcommand=tree_h_sb.set)
+
+        self.t3_tree.grid(row=0, column=0, sticky="nsew")
+        tree_v_sb.grid(row=0, column=1, sticky="ns")
+        tree_h_sb.grid(row=1, column=0, sticky="ew")
+
+        table_frame.grid_rowconfigure(0, weight=1)
+        table_frame.grid_columnconfigure(0, weight=1)
+
+        self.t3_tree.tag_configure("tag_in", foreground="#1B5E20")
+        self.t3_tree.tag_configure("tag_out", foreground="#E65100")
+        self.t3_tree.tag_configure("tag_none", foreground="#424242")
+        self.t3_tree.tag_configure("tag_error", foreground="#B71C1C", background="#FFEBEE")
+
+        self.t3_tree.bind("<<TreeviewSelect>>", self.t3_on_select_packet)
+
+        # 2. 下半部：封包詳細檢視 (佔據 70% 空間，100% 全寬度 Hexdump)
+        detail_frame = tk.LabelFrame(paned, text="封包詳細檢視 (Packet Inspector & Full-Width Hexdump)", padx=10, pady=6)
+        paned.add(detail_frame, weight=3)
+
+        # 頂部緊湊摘要列 (橫向排列 CDB, Sense, 存檔按鈕)
+        meta_frame = tk.Frame(detail_frame)
+        meta_frame.pack(fill=tk.X, pady=(0, 6))
+
+        # Row 1: CDB (16-Byte Hex) 與 Sense Data (橫向分欄)
+        r1_frame = tk.Frame(meta_frame)
+        r1_frame.pack(fill=tk.X, pady=(0, 4))
+
+        tk.Label(r1_frame, text="CDB (Hex):", font=("Arial", 9, "bold")).pack(side=tk.LEFT)
+        self.t3_cdb_txt = tk.Text(r1_frame, height=1, width=42, font=("Consolas", 9), bg="#F5F5F5", relief=tk.SOLID, bd=1)
+        self.t3_cdb_txt.pack(side=tk.LEFT, padx=(4, 15))
+
+        tk.Label(r1_frame, text="Sense Data:", font=("Arial", 9, "bold")).pack(side=tk.LEFT)
+        self.t3_sense_txt = tk.Text(r1_frame, height=1, font=("Consolas", 9), bg="#F5F5F5", relief=tk.SOLID, bd=1)
+        self.t3_sense_txt.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 10))
+
+        tk.Button(
+            r1_frame, text="💾 另存 Payload (.bin)", command=self.t3_save_selected_payload,
+            bg="#FFF3E0", font=("Arial", 9, "bold")
+        ).pack(side=tk.RIGHT)
+
+        # Row 2: 狀態摘要標籤
+        self.t3_summary_lbl = tk.Label(
+            meta_frame, text="請從上方清單點選封包以檢視內容", fg="#0D47A1", font=("Arial", 9, "bold"), anchor="w"
+        )
+        self.t3_summary_lbl.pack(fill=tk.X)
+
+        # 底部：超大寬度與高度的 Payload Hexdump 終端區
+        dump_f = tk.Frame(detail_frame)
+        dump_f.pack(fill=tk.BOTH, expand=True)
+
+        dump_sb_y = ttk.Scrollbar(dump_f, orient=tk.VERTICAL)
+        dump_sb_x = ttk.Scrollbar(dump_f, orient=tk.HORIZONTAL)
+        self.t3_dump_txt = tk.Text(
+            dump_f, font=("Consolas", 10), bg="#1E1E1E", fg="#A7F3D0",
+            wrap=tk.NONE, yscrollcommand=dump_sb_y.set, xscrollcommand=dump_sb_x.set
+        )
+        self.t3_dump_txt.grid(row=0, column=0, sticky="nsew")
+        dump_sb_y.grid(row=0, column=1, sticky="ns")
+        dump_sb_x.grid(row=1, column=0, sticky="ew")
+        dump_f.grid_rowconfigure(0, weight=1)
+        dump_f.grid_columnconfigure(0, weight=1)
+        dump_sb_y.config(command=self.t3_dump_txt.yview)
+        dump_sb_x.config(command=self.t3_dump_txt.xview)
+
+        # 預設啟動 PacketLogger 並註冊 Callback
+        packet_logger.enable()
+        packet_logger.add_callback(lambda rec: self.root.after(0, self.t3_on_new_packet, rec))
+
+    # Tab 3 Methods
+    def t3_toggle_sniffer(self):
+        if packet_logger.is_enabled:
+            packet_logger.disable()
+            self.t3_toggle_btn.config(text="▶ 啟動監控 (Start)", bg="#2E7D32")
+            self.t3_status_lbl.config(text="○ 已暫停監控 (Paused)", fg="#757575")
+        else:
+            packet_logger.enable()
+            self.t3_toggle_btn.config(text="■ 停止監控 (Stop)", bg="#D32F2F")
+            self.t3_status_lbl.config(text="● 監控錄製中 (Recording)", fg="#2E7D32")
+
+    def t3_clear_packets(self):
+        packet_logger.clear()
+        self.t3_records_map.clear()
+        self.t3_selected_record = None
+        for item in self.t3_tree.get_children():
+            self.t3_tree.delete(item)
+        self.t3_count_lbl.config(text="總封包數: 0")
+        self.t3_cdb_txt.delete(1.0, tk.END)
+        self.t3_sense_txt.delete(1.0, tk.END)
+        self.t3_dump_txt.delete(1.0, tk.END)
+        self.t3_summary_lbl.config(text="列表已清空", fg="gray")
+
+    def t3_export_csv(self):
+        if not packet_logger.get_all():
+            return messagebox.showinfo("提示", "目前沒有任何封包記錄可匯出！")
+        path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV Files (*.csv)", "*.csv"), ("All Files", "*.*")],
+            title="匯出封包紀錄為 CSV"
+        )
+        if path:
+            count = packet_logger.export_csv(path)
+            messagebox.showinfo("匯出成功", f"已成功匯出 {count} 筆封包紀錄至:\n{os.path.basename(path)}")
+
+    def t3_on_new_packet(self, rec):
+        idx = rec["index"]
+        self.t3_records_map[idx] = rec
+
+        direction = rec.get("direction", "?")
+        scsi_st_str = rec.get("scsi_status", "")
+        tag = "tag_in" if direction == "IN" else ("tag_out" if direction == "OUT" else "tag_none")
+        if "CHECK CONDITION" in scsi_st_str or "0x02" in scsi_st_str:
+            tag = "tag_error"
+
+        item_id = self.t3_tree.insert(
+            "", tk.END, iid=str(idx),
+            values=(
+                rec["index"],
+                rec["timestamp"],
+                rec["drive"],
+                rec["direction"],
+                rec["cmd_name"],
+                rec["data_len"],
+                rec["scsi_status"],
+                rec["elapsed_ms"]
+            ),
+            tags=(tag,)
+        )
+
+        total_count = len(self.t3_records_map)
+        self.t3_count_lbl.config(text=f"總封包數: {total_count}")
+
+        if self.t3_auto_scroll.get():
+            self.t3_tree.see(item_id)
+
+    def t3_on_select_packet(self, event):
+        selected = self.t3_tree.selection()
+        if not selected:
+            return
+        idx = int(selected[0])
+        rec = self.t3_records_map.get(idx)
+        if not rec:
+            return
+
+        self.t3_selected_record = rec
+
+        # 1. 顯示 CDB
+        self.t3_cdb_txt.delete(1.0, tk.END)
+        self.t3_cdb_txt.insert(tk.END, rec.get("cdb_hex", "(none)"))
+
+        # 2. 顯示 Sense Data
+        self.t3_sense_txt.delete(1.0, tk.END)
+        self.t3_sense_txt.insert(tk.END, rec.get("sense_str", "(none)"))
+
+        # 3. 顯示摘要狀態
+        self.t3_summary_lbl.config(
+            text=f"📌 封包 #{rec['index']}   |   時間: {rec['timestamp']}   |   磁碟: {rec['drive']}   |   方向: {rec.get('direction', '?')}   |   長度: {rec.get('data_len', 0)} Bytes   |   狀態: {rec.get('scsi_status', '')}   |   延遲: {rec['elapsed_ms']} ms",
+            fg="#0D47A1"
+        )
+
+        # 4. 顯示 Payload Hexdump
+        self.t3_dump_txt.delete(1.0, tk.END)
+        raw_payload = rec.get("raw_payload", b"")
+        if raw_payload:
+            self.t3_dump_txt.insert(tk.END, hexdump(raw_payload))
+        else:
+            self.t3_dump_txt.insert(tk.END, "(No Payload Data)")
+
+    def t3_save_selected_payload(self):
+        if not self.t3_selected_record:
+            return messagebox.showwarning("警告", "請先選取一筆封包！")
+        raw_payload = self.t3_selected_record.get("raw_payload", b"")
+        if not raw_payload:
+            return messagebox.showwarning("警告", "所選取的封包沒有 Payload 資料！")
+        path = filedialog.asksaveasfilename(
+            defaultextension=".bin",
+            filetypes=[("Binary Files (*.bin)", "*.bin"), ("All Files", "*.*")],
+            title="儲存 Payload 資料"
+        )
+        if path:
+            with open(path, "wb") as f:
+                f.write(raw_payload)
+            messagebox.showinfo("存檔成功", f"已成功儲存 {len(raw_payload)} Bytes 到 {os.path.basename(path)}")
 
 if __name__ == "__main__":
     if ctypes.windll.shell32.IsUserAnAdmin():

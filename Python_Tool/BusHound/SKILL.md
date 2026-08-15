@@ -22,7 +22,7 @@ description: >
 
 ## 📖 建議下次閱讀順序 (Suggested Reading Order for AI)
 > 如果你是剛接手這個專案的 AI，強烈建議按照以下順序閱讀此文件，以便最快進入狀況：
-> 1. **⚠️【強制規範】每次修改/更新程式碼後，必須執行單元測試**：`python -m unittest discover -s tests -p "test_*.py"` 確保所有測試 PASS。
+> 1. **⚠️【強制規範】每次修改/更新程式碼後，必須執行全套單元測試與模擬環境測試**：`python -m unittest discover -s tests -p "test_*.py"` 確保 41 項測試（單元測試 + 虛擬硬體端到端模擬）全數 PASS。
 > 2. **[十、後續功能規劃與研究方向](#十後續功能規劃與研究方向)**：特別是 **10.7 尚未完成清單 (TODO)**，這是你當前的首要任務目標。
 > 3. **[九、更新歷程 (Changelog)](#九更新歷程-changelog)**：了解前幾個 Session 已經完成的事項（包含後端分離、PacketLogger 實作與各種 Bug 修復），避免重複造輪子。
 > 4. **[一、專案目的與架構概述](#一專案目的與架構概述)**：快速掌握專案目錄結構與職責劃分（`BusHound.py`、`backend_storage.py`、`test_backend.py`、`test_gui.py`）。
@@ -45,13 +45,16 @@ BusHound/
   src/
     BusHound.py        # 主程式，純 GUI 邏輯
     backend_storage.py # 後端存取核心（IOCTL, SCSI Pass-Through, 協定解析, PacketLogger）
+    mock_storage.py    # 虛擬儲存裝置模擬引擎 (Virtual PhysicalDrive & Win32 SPTD Mock Driver)
     __init__.py
   tests/
     test_backend.py    # 後端單元測試套件（23 項測試）
     test_gui.py        # GUI 邏輯與安全邊界單元測試（5 項測試）
+    test_simulation.py # 端到端虛擬硬體與協定模擬測試套件（10 項測試）
     __init__.py
   AP_Key/
     ap_key.bin         # (執行時動態需要) AP_KEY 認證金鑰二進位檔，需自行放置
+  assets/              # 簡報與文檔用實際 GUI 渲染圖檔
   SKILL.md             # 專案知識庫與開發手冊（本文件）
 ```
 
@@ -257,7 +260,7 @@ Windows 驅動在 64-bit OS 要求 `SCSI_PASS_THROUGH_DIRECT` 有特定 alignmen
 
 ## 七、重要注意事項（給 AI 的 checklist）
 
-- [ ] **⚠️【強制規範】更新程式碼後，必須執行單元測試確認全數通過：**
+- [ ] **⚠️【強制規範】更新程式碼後，必須執行全套單元測試與虛擬硬體模擬驗證（41 項測試全數通過）：**
   ```powershell
   python -m unittest discover -s tests -p "test_*.py"
   ```
@@ -267,6 +270,48 @@ Windows 驅動在 64-bit OS 要求 `SCSI_PASS_THROUGH_DIRECT` 有特定 alignmen
 - [ ] Tab 2 的 64-byte Payload 要補零到 512B 才送（程式已處理）
 - [ ] `send_scsi_command()` 中 `SPTD_WITH_SENSE` 是定義在函式內的 local class，每次呼叫都重建，這是刻意設計（避免 ctypes 狀態殘留）
 - [ ] Tab 1 的 CDB 固定 16 byte，Tab 2 的 Payload 是 64 byte 送 512B buffer
+- [ ] **Tkinter 字型大小必須為整數**：`font=("Consolas", 9)`，禁止傳入浮點數如 `9.5`。
+- [ ] **Hexdump/Terminal Text 控制項必設 `wrap=tk.NONE`**：防止視窗寬度不足時文字折行破壞表格對齊。
+
+---
+
+## 八、UI/UX 設計規範與排版實戰避坑指南 (Hexdump & Tkinter Layout Best Practices)
+
+在儲存底層除錯工具中，**資料可讀性（Readability）** 與 **版面利用率（Screen Real Estate）** 決定了工具的專業度。以下為專案沉澱的重要介面設計準則：
+
+### 8.1 工業級 Hexdump 排版標準（Wireshark / HxD / 010 Editor 標準）
+
+```text
+Offset  00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F   ASCII
+------  -----------------------  -----------------------  |----------------|
+0000    00 80 02 02 1F 00 00 00  41 54 41 20 20 20 20 20  |........ATA     |
+0010    43 54 35 30 30 4D 58 35  30 30 53 53 44 31 20 20  |CT500MX500SSD1  |
+0020    4D 33 43 52 30 34 33 20                           |M3CR043         |
+```
+
+1. **8-Byte 分組間隔（Grouped Spacing）**：
+   - 第 7 Byte 與第 8 Byte 之間加入**雙空格間隔**，精準區分前半段（00~07）與後半段（08~0F），大幅降低長時間檢視 Hex 封包時的視覺疲勞。
+2. **頂部欄位座標標題（Offset Header）**：
+   - 頂部統一加入 `Offset  00 01 02 ... 0E 0F   ASCII` 與分隔虛線，讓工程師能直接由上方標題向下垂直對齊定位。
+3. **ASCII 欄位邊界與管道符包裹（Delimited ASCII）**：
+   - ASCII 部分以 `|...|` 包裹；當資料末尾不足 16 Bytes 時，**Hex 與 ASCII 皆向右補齊空格**，確保右側 `|` 邊界絕對整齊對齊。
+
+### 8.2 空間利用：全寬度垂直堆疊（Stacked Layout vs Horizontal Split）
+
+- ❌ **錯誤做法（左右分割）**：將詳細檢視器拆為左右兩欄（左邊放 CDB/Sense，右邊放 Hexdump）。由於標準 Hexdump 一行需佔用 74~80 個字元寬度，左右分割會嚴重壓縮 Hexdump 的顯示寬度，導致必須頻繁水平捲動。
+- ✅ **正確做法（上下堆疊）**：
+  1. 將 CDB、Sense Data、狀態摘要等短資訊整合成**頂部單行緊湊工具列 (Meta Header)**。
+  2. 下方的 Payload Hexdump 終端區享有 **100% 全螢幕寬度** 與 **70% 垂直高度**。
+  3. 上方的 Treeview 列表維持緊湊高度（`weight=1`，顯示 ~6 行），將視覺焦點留給底部的 Raw Data。
+
+### 8.3 Tkinter 與 GUI 開發避坑要點
+
+1. **禁用自動換行（`wrap=tk.NONE`）**：
+   - 所有顯示 Hexdump、Log 的 `tk.Text` 必須設置 `wrap=tk.NONE`，並配置水平（`orient=tk.HORIZONTAL`）與垂直雙向捲軸，徹底防止視窗縮小時折行導致排版錯亂。
+2. **Tkinter 字型大小整數限制**：
+   - `font=("Consolas", 9)` 或 `10`，**不可使用浮點數**（如 `9.5`），否則 Windows Tcl/Tk 核心會拋出 `_tkinter.TclError: expected integer but got "9.5"`。
+3. **PPTX 檔案鎖定防護（EBUSY）**：
+   - 當使用者在 PowerPoint 中開啟簡報檔案時，腳本寫入會失敗並報 `EBUSY`。產生腳本應設計 `try/catch` 自動切換至備用檔名（如 `_v2.pptx`），確保建置流程不崩潰。
 
 ---
 
@@ -591,6 +636,100 @@ BusHound/
 
 ---
 
+### 2026-08-16 Session 7 — 虛擬儲存裝置模擬系統 (Mock Storage Engine) 與端到端測試套件（Antigravity / Gemini 3.7 Flash）
+
+#### 需求與設計
+為了避免在自動化測試或非實機環境中對實體硬碟產生誤寫入風險，同時確保所有 SCSI / VUC 指令邏輯具備 100% 可重複驗證性，建立了一套完整的虛擬儲存裝置與 Win32 IOCTL 模擬驅動環境。
+
+#### 完成項目
+
+1. **虛擬儲存裝置模擬核心 [`src/mock_storage.py`](file:///c:/Users/asd55/OneDrive/桌面/code/myGit/codePractice/Python_Tool/BusHound/src/mock_storage.py)**：
+   - `MockStorageDevice`：
+     - **標準 SCSI 協定支援**：`INQUIRY (0x12)` (回傳 36B 標準欄位與型號)、`TUR (0x00)`、`READ CAPACITY (10) (0x25)`、`READ(10) (0x28)` / `WRITE(10) (0x2A)` 虛擬 LBA 記憶體磁區讀寫迴圈驗證。
+     - **AP_Key 特權序列**：支援 3-Step 解鎖（0xC0 送金鑰 $\to$ 0xC1 觸發解鎖 $\to$ 0xC3 狀態讀取），並具備解鎖前拒絕特權指令之狀態機。
+     - **64-Byte VUC 協議**：支援 0xC0 配置 Payload、0xC1/0xC2 讀寫執行、0xC3 狀態回讀。
+     - **故障注入 (Fault Injection)**：支援強制注入 `0x02 CHECK CONDITION`、指定 Sense Key、ASC、ASCQ，測試例外防禦機制。
+   - `MockWin32Driver`：
+     - 模擬 Windows 核心 `CreateFileW`、`CloseHandle`、`DeviceIoControl` (`IOCTL_SCSI_PASS_THROUGH_DIRECT`、`FSCTL_LOCK_VOLUME`、`FSCTL_UNLOCK_VOLUME`)。
+
+2. **端到端模擬測試套件 [`tests/test_simulation.py`](file:///c:/Users/asd55/OneDrive/桌面/code/myGit/codePractice/Python_Tool/BusHound/tests/test_simulation.py)** (10 項測試)：
+   - 虛擬硬碟指令直接測試（TUR, INQUIRY, LBA 邊界溢位, 故障注入, AP_Key + VUC 完整通訊）。
+   - 後端 `open_drive` $\to$ `lock_drive` $\to$ `send_scsi_command` $\to$ `unlock_drive` $\to$ `close_drive` 全流程模擬。
+   - GUI 端到端模擬（Tab 1 INQUIRY 執行 $\to$ 終端輸出驗證；Tab 2 64-Byte VUC + AP_Key 執行 $\to$ 狀態與 Log 驗證）。
+
+3. **全套測試規模**：測試數量由 28 項擴展至 **38 項全數通過 (38/38 PASS)**。
+
+#### 本次修改檔案
+- `src/mock_storage.py`：新增虛擬儲存裝置與模擬驅動引擎
+- `tests/test_simulation.py`：新增端到端模擬測試套件
+- `SKILL.md`：記錄 Session 7 Changelog 與更新測試規範
+
+---
+
+### 2026-08-16 Session 8 — Tab 3 即時封包監控 (Packet Sniffer) 介面實作與全功能整合（Antigravity / Gemini 3.7 Flash）
+
+#### 需求與設計
+將後端已完成的 `PacketLogger` 核心引擎與前端 GUI 深度整合，提供媲美商業工具的 Tab 3 即時封包監控分頁，讓工程師能直觀檢視每筆指令的傳輸方向、耗時、CDB、Sense Data 與 Payload Hexdump。
+
+#### 完成項目
+
+1. **Tab 3 Packet Sniffer GUI 完整介面實作 ([`src/BusHound.py`](file:///c:/Users/asd55/OneDrive/桌面/code/myGit/codePractice/Python_Tool/BusHound/src/BusHound.py))**：
+   * **控制列**：`[▶ 啟動/■ 停止監控]` 切換按鈕、即時狀態燈 (`● 監控錄製中`)、`[🗑 清空列表]`、`[💾 匯出 CSV]`、自動捲動開關 (`☑ 自動捲動至最新`)、總封包數即時計數器。
+   * **封包清單表格 (`ttk.Treeview`)**：支援 `#`、`時間`、`目標磁碟`、`方向`、`指令名稱`、`長度 (Bytes)`、`SCSI 狀態`、`延遲 (ms)`。
+   * **色彩標籤機制**：Data-In (綠色)、Data-Out (橘色)、No-Data (灰色)、Check Condition / 錯誤 (紅色亮顯)。
+   * **封包詳細檢視器 (Packet Inspector)**：
+     - 左側：16-Byte CDB Hex 視窗、Sense Data 智能解析視窗、摘要狀態。
+     - 右側：高對比黑底綠字 Payload Hexdump (`Consolas` 字型) 與 `[💾 另存 Payload (.bin)]` 按鈕。
+2. **後端 PacketLogger 資料結構擴充 ([`src/backend_storage.py`](file:///c:/Users/asd55/OneDrive/桌面/code/myGit/codePractice/Python_Tool/BusHound/src/backend_storage.py))**：
+   * 記錄中加入 `raw_payload`, `raw_cdb`, `raw_sense` 二進位 Bytes，供 GUI Hexdump 格式化與 Binary 存檔使用。
+   * `export_csv` 加上 `extrasaction='ignore'` 保證 CSV 輸出相容性。
+3. **單元測試擴充至 41 項全數 PASS ([`tests/test_gui.py`](file:///c:/Users/asd55/OneDrive/桌面/code/myGit/codePractice/Python_Tool/BusHound/tests/test_gui.py))**：
+   * 新增 Tab 3 啟動/暫停切換、封包插入、選取與 Inspector 內容驗證、清空重置等測試。
+4. **簡報更新與二進位封裝**：
+   * 更新 `BusHound_Operation_Guide.pptx` / `BusHound_Operation_Guide_v2.pptx`，新增 Tab 3 專屬教學投影片與實際 GUI 截圖。
+   * 重新使用 PyInstaller 打包為無黑視窗 `dist/BusHound.exe` 並更新壓縮檔 `BusHound.7z`。
+
+#### 本次修改檔案
+- `src/BusHound.py`：實作 `init_tab3_sniffer` 與相關事件處理
+- `src/backend_storage.py`：擴充 PacketLogger 原始二進位資料保存
+- `tests/test_gui.py`：新增 Tab 3 單元測試
+- `capture_gdi_screenshots.py`：新增 Tab 3 介面截圖產生
+- `create_presentation.js`：更新簡報產生腳本（擴展為 9 頁）
+- `dist/BusHound.exe` & `BusHound.7z`：重新封裝並發布
+- `SKILL.md`：記錄 Session 8 Changelog 與更新 TODO
+
+---
+
+### 2026-08-16 Session 9 — Hexdump 工業級排版優化與 Tab 3 全寬度堆疊佈局重構（Antigravity / Gemini 3.7 Flash）
+
+#### 需求與設計
+使用者反映 Tab 3 封包檢視器中的 Payload Hexdump 排版文字過於緊湊且視野狹小。為此進行了兩大維度重構：
+1. 重構 `backend_storage.py` 的 `hexdump()` 演算法，導入 Wireshark / HxD 工業級標準。
+2. 重構 Tab 3 介面佈局，徹底消除左右分欄帶來的橫向壓縮，改為「頂部橫向緊湊摘要條 + 底部 100% 全寬度/70% 垂直高度大視野 Hexdump 終端」。
+
+#### 完成項目
+
+1. **Hexdump 工業級排版標準實作 ([`src/backend_storage.py`](file:///c:/Users/asd55/OneDrive/桌面/code/myGit/codePractice/Python_Tool/BusHound/src/backend_storage.py))**：
+   - **8-Byte 分組間隔**：第 7 與第 8 Byte 之間加入雙空格分隔。
+   - **頂部座標 Header**：加入 `Offset  00 01 02 ... 0E 0F   ASCII` 與水平分隔線。
+   - **ASCII 邊界對齊**：以 `|...|` 嚴格包裹，不足 16 Bytes 補齊空格。
+2. **Tab 3 全寬度垂直堆疊佈局重構 ([`src/BusHound.py`](file:///c:/Users/asd55/OneDrive/桌面/code/myGit/codePractice/Python_Tool/BusHound/src/BusHound.py))**：
+   - 將 CDB、Sense Data 與狀態整合成頂部單行工具列，讓出 100% 水平寬度給 Hexdump。
+   - Treeview 表格設定緊湊比例（`weight=1`），Hexdump 終端區擴大為 `weight=3`（佔 70% 垂直高度，可視行數擴增至 15~20 行）。
+   - Text 控制項全面加入 `wrap=tk.NONE` 與雙向捲軸支援。
+3. **測試與發布全同步**：
+   - 41 項單元與模擬測試全數 PASS。
+   - 重新生成高解析度截圖並更新 PPTX 簡報與 `BusHound.7z`。
+
+#### 本次修改檔案
+- `src/backend_storage.py`：重構 `hexdump()` 函式格式
+- `src/BusHound.py`：重構 Tab 3 介面為全寬垂直堆疊佈局，加入 `wrap=tk.NONE` 與雙向捲軸
+- `capture_gdi_screenshots.py`：更新 GUI 截圖產生
+- `create_presentation.js`：更新簡報檔案鎖定 (EBUSY) 防護機制
+- `SKILL.md`：新增第八節 UI/UX 規範與 Session 9 Changelog
+
+---
+
 
 
 > 下次 AI 接手時，請先讀此節，從「尚未完成」清單挑選目標繼續。
@@ -672,30 +811,36 @@ BusHound/
 - **GUI 規劃**：新增 Tab 4「NVMe Admin Cmd」，含預設按鈕直接填入 Opcode 參數
 - **參考來源**：`smartmontools` 的 `os_win32.cpp` 是 Windows 上 NVMe IOCTL 最完整的開源 C 參考實作
 
-### 10.6 單元測試（Unit Tests）架構與實作
+### 10.6 單元測試與虛擬儲存裝置模擬環境
 
-目前已實作完整的單元測試套件（基於 Python 內建 `unittest`），無須額外安裝 pytest 等第三方套件：
+目前已實作完整的單元測試與端到端模擬套件（基於 Python 內建 `unittest`），無須實體硬體即可進行全功能回歸驗證：
 
-1. **後端核心測試 [`test_backend.py`](file:///c:/Users/asd55/OneDrive/桌面/code/myGit/codePractice/Python_Tool/BusHound/test_backend.py)** (共 23 項測試):
+1. **後端核心測試 [`tests/test_backend.py`](file:///c:/Users/asd55/OneDrive/桌面/code/myGit/codePractice/Python_Tool/BusHound/tests/test_backend.py)** (共 23 項測試):
    - `TestCtypesStructures`：驗證 64-bit Windows 下 `SCSI_PASS_THROUGH_DIRECT` (56 Bytes) 與 `SENSE_DATA_BUFFER` (24 Bytes) 大小與 8-byte 指標自然對齊。
    - `TestProtocolParsing`：驗證標準 SCSI Opcode 解析、VUC (0x06/0xFE/0xC0~0xC3) 解析、Sense Data (0x70/0x71, Sense Key, ASC/ASCQ) 解析與異常長度保護。
    - `TestHelpers`：驗證 `hexdump` 格式化、`get_win_error_msg` Win32 錯誤轉換、`get_base_dir` 路徑解析，以及 mock PowerShell 磁碟列舉成功與 fallback。
    - `TestPacketLogger`：驗證記錄器開關、記錄格式、GUI Callback 機制、CSV 匯出與清除功能。
    - `TestScsiIoControl`：Mock Win32 `DeviceIoControl` 驗證 Pass-Through 成功、失敗 OSError 拋出、以及磁碟鎖定/解鎖 `FSCTL_LOCK_VOLUME`。
 
-2. **GUI 狀態測試 [`test_gui.py`](file:///c:/Users/asd55/OneDrive/桌面/code/myGit/codePractice/Python_Tool/BusHound/test_gui.py)** (共 5 項測試):
+2. **GUI 狀態測試 [`tests/test_gui.py`](file:///c:/Users/asd55/OneDrive/桌面/code/myGit/codePractice/Python_Tool/BusHound/tests/test_gui.py)** (共 5 項測試):
    - `TestGuiLogic`：驗證 Tab 1 / Tab 2 矩陣清空、64-Byte VUC Offset 40~43 長度自動計算與使用者確認/略過邏輯、超大長度 (> 256MB) 安全上限攔截。
 
-**執行所有測試指令**：
+3. **虛擬儲存裝置模擬測試 [`tests/test_simulation.py`](file:///c:/Users/asd55/OneDrive/桌面/code/myGit/codePractice/Python_Tool/BusHound/tests/test_simulation.py)** (共 10 項測試):
+   - `TestMockStorageDeviceDirect`：虛擬實體硬碟 TUR、INQUIRY、READ CAPACITY、LBA 讀寫迴圈驗證、LBA 溢位防護、故障注入 (Fault Injection)、AP_Key 3-step 解鎖與 VUC 特權傳輸。
+   - `TestEndToEndWithMockDriver`：模擬 Windows 驅動層完整生命週期 (`open` $\to$ `lock` $\to$ `send_scsi` $\to$ `unlock` $\to$ `close`)。
+   - `TestGuiWithSimulationEnvironment`：GUI 端到端模擬測試（Tab 1 指令執行與日誌驗證、Tab 2 AP_Key + 64-Byte VUC 執行與狀態驗證）。
+
+**執行全套測試指令**：
 ```powershell
 python -m unittest discover -s tests -p "test_*.py"
 ```
 
 ### 10.7 尚未完成清單（給下一個 AI 的 TODO）
 
-- `[ ]` Tab 3 Packet Sniffer GUI 實作（整合 PacketLogger 顯示）
+- `[x]` Tab 3 Packet Sniffer GUI 實作（整合 PacketLogger 顯示、Hexdump Inspector 與 CSV 匯出，Session 8 完成）
 - `[x]` BusHound.py Tab1 / Tab2 的 `send_scsi_command()` 呼叫補上 `drive_label` 參數（Session 5 完成）
-- `[x]` `test_backend.py` / `test_gui.py` 單元測試建置（28 項測試全數通過）
+- `[x]` `test_backend.py` / `test_gui.py` 單元測試建置（Session 6 完成）
+- `[x]` 虛擬儲存裝置模擬環境 `mock_storage.py` & `test_simulation.py` 建置（Session 7 完成，41 項測試全數通過）
 - `[ ]` ETW Storport 整合（Phase 2，可先用 `pywintrace`）
 - `[ ]` frida hook 整合（Phase 3，選用）
 - `[ ]` NVMe Admin Cmd Tab 4 實作（Identify + SMART）
