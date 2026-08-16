@@ -13,6 +13,7 @@ from tkinter import ttk, messagebox, filedialog
 import subprocess
 
 from backend_storage import *  # 所有後端邏輯集中於 backend_storage.py
+from firmware_updater import FirmwareUpdateEngine, natural_sort_key, CHUNK_SIZE, ADDR_INCREMENT
 
 
 class ScsiToolGUI:
@@ -29,14 +30,17 @@ class ScsiToolGUI:
         self.tab1 = ttk.Frame(self.notebook)
         self.tab2 = ttk.Frame(self.notebook)
         self.tab3 = ttk.Frame(self.notebook)
+        self.tab4 = ttk.Frame(self.notebook)
         
         self.notebook.add(self.tab1, text=" SCSI Command (16-Byte) ")
         self.notebook.add(self.tab2, text=" Vendor/Ext Command (64-Byte VUC) ")
         self.notebook.add(self.tab3, text=" Packet Sniffer (即時封包監控) ")
+        self.notebook.add(self.tab4, text=" MCU FW Update (韌體更新) ")
         
         self.init_tab1_scsi()
         self.init_tab2_64byte()
         self.init_tab3_sniffer()
+        self.init_tab4_fw_update()
 
     def create_global_header(self):
         header_frame = tk.LabelFrame(self.root, text="Global Settings", padx=10, pady=5)
@@ -765,6 +769,264 @@ class ScsiToolGUI:
             with open(path, "wb") as f:
                 f.write(raw_payload)
             messagebox.showinfo("存檔成功", f"已成功儲存 {len(raw_payload)} Bytes 到 {os.path.basename(path)}")
+
+    # ==========================================
+    # Tab 4: MCU 韌體更新 (Firmware Update)
+    # ==========================================
+    def init_tab4_fw_update(self):
+        self.fw_engine = FirmwareUpdateEngine()
+        self.t4_cdb_entries = []
+
+        # --- 區域 1：韌體分塊資料夾選擇 ---
+        dir_frame = tk.LabelFrame(self.tab4, text="📁 韌體分塊資料夾 (Firmware Chunks Directory)", padx=10, pady=6)
+        dir_frame.pack(fill=tk.X, padx=10, pady=(8, 4))
+
+        dir_row = tk.Frame(dir_frame)
+        dir_row.pack(fill=tk.X)
+        tk.Label(dir_row, text="路徑:", font=("Arial", 9)).pack(side=tk.LEFT)
+        self.t4_dir_entry = tk.Entry(dir_row, width=60, font=("Consolas", 9))
+        self.t4_dir_entry.pack(side=tk.LEFT, padx=(4, 8), fill=tk.X, expand=True)
+        tk.Button(
+            dir_row, text="📂 瀏覽資料夾 (Browse)", command=self.t4_browse_folder,
+            bg="#E1F5FE", font=("Arial", 9, "bold")
+        ).pack(side=tk.LEFT)
+
+        self.t4_dir_info_lbl = tk.Label(
+            dir_frame, text="尚未載入任何韌體檔案", fg="#757575", font=("Arial", 9), anchor="w"
+        )
+        self.t4_dir_info_lbl.pack(fill=tk.X, pady=(4, 0))
+
+        # --- 區域 2：CDB 模板設定 ---
+        cdb_frame = tk.LabelFrame(self.tab4, text="⚙️ CDB 模板與通訊設定", padx=10, pady=6)
+        cdb_frame.pack(fill=tk.X, padx=10, pady=4)
+
+        cdb_btn_row = tk.Frame(cdb_frame)
+        cdb_btn_row.pack(fill=tk.X, pady=(0, 4))
+        tk.Button(cdb_btn_row, text="📂 載入 CDB .bin", command=self.t4_load_cdb_bin, bg="#E1F5FE").pack(side=tk.LEFT)
+        tk.Button(cdb_btn_row, text="清空 CDB", command=self.t4_clear_cdb).pack(side=tk.LEFT, padx=5)
+
+        cdb_matrix = tk.Frame(cdb_frame)
+        cdb_matrix.pack(pady=2)
+        for i in range(16):
+            r, c = i // 8, i % 8
+            cf = tk.Frame(cdb_matrix, padx=2, pady=2)
+            cf.grid(row=r, column=c)
+            lbl_text = f"B{i:02d}"
+            if i == 3:
+                lbl_text = "B03 (Addr H)"
+            elif i == 4:
+                lbl_text = "B04 (Addr L)"
+            tk.Label(cf, text=lbl_text, font=("Arial", 7), fg="gray").pack()
+            e = tk.Entry(cf, width=4, font=("Consolas", 12, "bold"), justify='center')
+            e.insert(0, "00")
+            e.pack()
+            self.t4_cdb_entries.append(e)
+
+        addr_row = tk.Frame(cdb_frame)
+        addr_row.pack(fill=tk.X, pady=(4, 0))
+        tk.Label(addr_row, text="起始 Address (Hex):", font=("Arial", 9)).pack(side=tk.LEFT)
+        self.t4_start_addr_entry = tk.Entry(addr_row, width=8, font=("Consolas", 10, "bold"), justify='center')
+        self.t4_start_addr_entry.insert(0, "0000")
+        self.t4_start_addr_entry.pack(side=tk.LEFT, padx=(4, 15))
+        tk.Label(addr_row, text="每次遞增: 0x80 (128B)  |  Address 對應: CDB[3]=High Byte, CDB[4]=Low Byte",
+                 font=("Arial", 9), fg="#616161").pack(side=tk.LEFT)
+
+        # --- 區域 3：執行控制與即時進度 ---
+        ctrl_frame = tk.LabelFrame(self.tab4, text="🚀 執行控制與即時進度", padx=10, pady=6)
+        ctrl_frame.pack(fill=tk.X, padx=10, pady=4)
+
+        btn_row = tk.Frame(ctrl_frame)
+        btn_row.pack(fill=tk.X, pady=(0, 4))
+        self.t4_start_btn = tk.Button(
+            btn_row, text="▶ 開始韌體更新 (Start Update)", command=self.t4_start_update,
+            bg="#2E7D32", fg="white", font=("Arial", 10, "bold"), width=28
+        )
+        self.t4_start_btn.pack(side=tk.LEFT)
+        self.t4_abort_btn = tk.Button(
+            btn_row, text="⏹ 中止更新 (Abort)", command=self.t4_abort_update,
+            bg="#D32F2F", fg="white", font=("Arial", 10, "bold"), width=18, state=tk.DISABLED
+        )
+        self.t4_abort_btn.pack(side=tk.LEFT, padx=10)
+
+        self.t4_progress = ttk.Progressbar(ctrl_frame, mode='determinate', length=600)
+        self.t4_progress.pack(fill=tk.X, pady=(0, 4))
+
+        self.t4_status_lbl = tk.Label(
+            ctrl_frame, text="就緒 — 請載入韌體資料夾與設定 CDB 模板後開始",
+            fg="#0D47A1", font=("Arial", 9, "bold"), anchor="w"
+        )
+        self.t4_status_lbl.pack(fill=tk.X)
+
+        # --- 區域 4：更新日誌 Terminal ---
+        log_frame = tk.LabelFrame(self.tab4, text="📜 更新日誌 (FW Update Log)", padx=10, pady=6)
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(4, 8))
+
+        log_inner = tk.Frame(log_frame)
+        log_inner.pack(fill=tk.BOTH, expand=True)
+        log_sb_y = ttk.Scrollbar(log_inner, orient=tk.VERTICAL)
+        log_sb_x = ttk.Scrollbar(log_inner, orient=tk.HORIZONTAL)
+        self.t4_log_txt = tk.Text(
+            log_inner, font=("Consolas", 9), bg="#1E1E1E", fg="#A7F3D0",
+            wrap=tk.NONE, yscrollcommand=log_sb_y.set, xscrollcommand=log_sb_x.set
+        )
+        self.t4_log_txt.grid(row=0, column=0, sticky="nsew")
+        log_sb_y.grid(row=0, column=1, sticky="ns")
+        log_sb_x.grid(row=1, column=0, sticky="ew")
+        log_inner.grid_rowconfigure(0, weight=1)
+        log_inner.grid_columnconfigure(0, weight=1)
+        log_sb_y.config(command=self.t4_log_txt.yview)
+        log_sb_x.config(command=self.t4_log_txt.xview)
+
+    # --- Tab 4 事件處理 ---
+    def t4_log(self, msg):
+        """寫入 Tab 4 Terminal Log (thread-safe via root.after)"""
+        from datetime import datetime
+        ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        self.t4_log_txt.insert(tk.END, f"[{ts}] {msg}\n")
+        self.t4_log_txt.see(tk.END)
+
+    def t4_browse_folder(self):
+        folder = filedialog.askdirectory(title="選擇韌體分塊資料夾")
+        if not folder:
+            return
+        self.t4_dir_entry.delete(0, tk.END)
+        self.t4_dir_entry.insert(0, folder)
+        self._t4_load_chunks(folder)
+
+    def _t4_load_chunks(self, folder):
+        """載入韌體分塊並更新統計"""
+        try:
+            start_hex = self.t4_start_addr_entry.get().strip()
+            self.fw_engine.start_address = int(start_hex, 16)
+        except ValueError:
+            self.fw_engine.start_address = 0x0000
+
+        ok, msg = self.fw_engine.load_chunks(folder)
+        if ok:
+            self.t4_dir_info_lbl.config(text=msg, fg="#1B5E20")
+            self.t4_log(msg)
+        else:
+            self.t4_dir_info_lbl.config(text=msg, fg="#B71C1C")
+            self.t4_log(f"❌ {msg}")
+
+    def t4_load_cdb_bin(self):
+        path = filedialog.askopenfilename(
+            filetypes=[("Binary Files", "*.bin"), ("All Files", "*.*")],
+            title="載入 CDB 模板 (.bin)"
+        )
+        if not path:
+            return
+        with open(path, 'rb') as f:
+            raw = f.read(16)
+        for i, b in enumerate(raw[:16]):
+            self.t4_cdb_entries[i].delete(0, tk.END)
+            self.t4_cdb_entries[i].insert(0, f"{b:02X}")
+        self.t4_log(f"已載入 CDB 模板: {os.path.basename(path)} ({len(raw)} Bytes)")
+
+    def t4_clear_cdb(self):
+        for e in self.t4_cdb_entries:
+            e.delete(0, tk.END)
+            e.insert(0, "00")
+
+    def _t4_read_cdb_from_entries(self):
+        """從 16 格 Entry 讀取 CDB bytes"""
+        cdb = []
+        for e in self.t4_cdb_entries:
+            try:
+                cdb.append(int(e.get().strip(), 16))
+            except ValueError:
+                cdb.append(0x00)
+        return cdb
+
+    def t4_start_update(self):
+        """開始韌體更新"""
+        # 驗證磁碟選擇
+        drive_str = self.drive_combo.get()
+        if not drive_str:
+            return messagebox.showwarning("警告", "請先選取目標磁碟！")
+
+        try:
+            drive_num = int(drive_str.split("PhysicalDrive")[-1].split()[0].split("-")[0].strip())
+        except (ValueError, IndexError):
+            return messagebox.showwarning("錯誤", f"無法解析磁碟編號: {drive_str}")
+
+        # 驗證韌體檔案
+        if not self.fw_engine.chunks:
+            folder = self.t4_dir_entry.get().strip()
+            if folder:
+                self._t4_load_chunks(folder)
+            if not self.fw_engine.chunks:
+                return messagebox.showwarning("警告", "請先載入韌體分塊資料夾！")
+
+        # 讀取 CDB 模板
+        cdb = self._t4_read_cdb_from_entries()
+        self.fw_engine.load_cdb_template(cdb)
+
+        # 讀取起始 Address
+        try:
+            start_hex = self.t4_start_addr_entry.get().strip()
+            self.fw_engine.start_address = int(start_hex, 16)
+        except ValueError:
+            self.fw_engine.start_address = 0x0000
+
+        # 確認
+        total = len(self.fw_engine.chunks)
+        end_addr = self.fw_engine.start_address + total * ADDR_INCREMENT
+        if not messagebox.askyesno(
+            "確認開始韌體更新",
+            f"目標磁碟: {drive_str}\n"
+            f"韌體分塊: {total} 個 ({total * CHUNK_SIZE:,} Bytes)\n"
+            f"Address 範圍: 0x{self.fw_engine.start_address:04X} → 0x{end_addr - ADDR_INCREMENT:04X}\n"
+            f"CDB 模板: {' '.join(f'{b:02X}' for b in cdb)}\n\n"
+            f"確定開始更新？此操作無法還原！"
+        ):
+            return
+
+        # 切換按鈕狀態
+        self.t4_start_btn.config(state=tk.DISABLED)
+        self.t4_abort_btn.config(state=tk.NORMAL)
+        self.t4_progress['value'] = 0
+        self.t4_progress['maximum'] = total
+
+        self.t4_log("=" * 60)
+        self.t4_log(f"韌體更新啟動 — 目標: {drive_str}")
+        self.t4_log(f"分塊數: {total}, Address: 0x{self.fw_engine.start_address:04X} → 0x{end_addr - ADDR_INCREMENT:04X}")
+        self.t4_log("=" * 60)
+
+        # 啟動背景執行緒
+        self.fw_engine.start(
+            drive_num,
+            progress_cb=lambda cur, tot, addr: self.root.after(0, self._t4_on_progress, cur, tot, addr),
+            log_cb=lambda msg: self.root.after(0, self.t4_log, msg),
+            done_cb=lambda ok, msg: self.root.after(0, self._t4_on_done, ok, msg),
+        )
+
+    def t4_abort_update(self):
+        """中止韌體更新"""
+        self.fw_engine.abort()
+        self.t4_abort_btn.config(state=tk.DISABLED)
+        self.t4_log("⚠️ 正在中止更新...")
+
+    def _t4_on_progress(self, current, total, address):
+        """進度回呼 (GUI thread)"""
+        self.t4_progress['value'] = current
+        pct = current / total * 100 if total > 0 else 0
+        self.t4_status_lbl.config(
+            text=f"進度: {current} / {total} ({pct:.1f}%)  |  目前 Address: 0x{address:04X}",
+            fg="#0D47A1"
+        )
+
+    def _t4_on_done(self, success, msg):
+        """完成回呼 (GUI thread)"""
+        self.t4_start_btn.config(state=tk.NORMAL)
+        self.t4_abort_btn.config(state=tk.DISABLED)
+        if success:
+            self.t4_status_lbl.config(text=msg, fg="#1B5E20")
+            self.t4_progress['value'] = self.t4_progress['maximum']
+            messagebox.showinfo("韌體更新完成", msg)
+        else:
+            self.t4_status_lbl.config(text=msg, fg="#B71C1C")
+            messagebox.showerror("韌體更新失敗", msg)
 
 if __name__ == "__main__":
     if ctypes.windll.shell32.IsUserAnAdmin():

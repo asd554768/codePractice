@@ -260,16 +260,19 @@ Windows 驅動在 64-bit OS 要求 `SCSI_PASS_THROUGH_DIRECT` 有特定 alignmen
 
 ## 七、重要注意事項（給 AI 的 checklist）
 
-- [ ] **⚠️【強制規範】更新程式碼後，必須執行全套單元測試與虛擬硬體模擬驗證（41 項測試全數通過）：**
+- [ ] **⚠️【強制規範】更新程式碼後，必須執行全套單元測試與虛擬硬體模擬驗證（84 項測試全數通過）：**
   ```powershell
   python -m unittest discover -s tests -p "test_*.py"
   ```
+  測試分佈：`test_backend.py` (23) + `test_gui.py` (8) + `test_simulation.py` (10) + `test_firmware.py` (43) = **84 項**
 - [ ] 必須以 Admin 執行，程式已內建 UAC 提權
 - [ ] 操作 PhysicalDrive Write 有資料損毀風險，修改前確認
 - [ ] FSCTL_LOCK_VOLUME 失敗目前只警告不中止，需注意
 - [ ] Tab 2 的 64-byte Payload 要補零到 512B 才送（程式已處理）
 - [ ] `send_scsi_command()` 中 `SPTD_WITH_SENSE` 是定義在函式內的 local class，每次呼叫都重建，這是刻意設計（避免 ctypes 狀態殘留）
 - [ ] Tab 1 的 CDB 固定 16 byte，Tab 2 的 Payload 是 64 byte 送 512B buffer
+- [ ] **Tab 4 韌體更新的 Address 映射**：CDB[3] = High Byte (MSB)、CDB[4] = Low Byte (LSB)，每塊遞增 0x80，16-bit 範圍。
+- [ ] **Tab 4 背景執行緒安全**：所有 GUI 回呼必須透過 `self.root.after(0, callback)` 切回主執行緒，禁止從 Worker Thread 直接操作 Tkinter 元件。
 - [ ] **Tkinter 字型大小必須為整數**：`font=("Consolas", 9)`，禁止傳入浮點數如 `9.5`。
 - [ ] **Hexdump/Terminal Text 控制項必設 `wrap=tk.NONE`**：防止視窗寬度不足時文字折行破壞表格對齊。
 
@@ -312,6 +315,76 @@ Offset  00 01 02 03 04 05 06 07  08 09 0A 0B 0C 0D 0E 0F   ASCII
    - `font=("Consolas", 9)` 或 `10`，**不可使用浮點數**（如 `9.5`），否則 Windows Tcl/Tk 核心會拋出 `_tkinter.TclError: expected integer but got "9.5"`。
 3. **PPTX 檔案鎖定防護（EBUSY）**：
    - 當使用者在 PowerPoint 中開啟簡報檔案時，腳本寫入會失敗並報 `EBUSY`。產生腳本應設計 `try/catch` 自動切換至備用檔名（如 `_v2.pptx`），確保建置流程不崩潰。
+
+---
+
+## 九、MCU 韌體更新模組開發規範 (Firmware Update Architecture & Testing Best Practices)
+
+本節記錄 Tab 4 MCU 韌體更新功能的架構設計經驗、通訊協定要點與全面性單元測試方法論。
+
+### 9.1 模組化架構：後端引擎與 GUI 完全解耦
+
+- **獨立模組 `firmware_updater.py`**：純業務邏輯，不依賴 Tkinter，可獨立測試。包含檔案載入、CDB 組裝、Worker Thread 傳輸迴圈。
+- **GUI 層（`BusHound.py` Tab 4）**：僅負責介面元件建構與事件綁定。透過 callback 模式（`progress_cb`、`log_cb`、`done_cb`）接收引擎回饋。
+- **好處**：43 項韌體測試中的 30 項不需要初始化 Tkinter（只有 GUI 相關的 9 項才需要），測試速度更快、CI 環境相容性更高。
+
+### 9.2 檔案排序：自然排序 (Natural Sort) 是強制要求
+
+```python
+import re
+def natural_sort_key(s):
+    return [int(text) if text.isdigit() else text.lower()
+            for text in re.split(r'(\d+)', s)]
+```
+
+- **問題**：Python 預設 `sorted()` 使用字串排序，會導致 `chunk_10.bin` 排在 `chunk_2.bin` 前面（因為字元 `'1' < '2'`）。
+- **解法**：用 Regex `re.split(r'(\d+)', s)` 拆分數字與文字部分，數字轉 int 比較。
+- **測試覆蓋**：基本數字排序、三位數字、大小寫不敏感、無數字退化。
+
+### 9.3 Address 動態組裝的規範與防護
+
+- **映射規則**：`CDB[3]` = Address 的 High Byte (MSB)、`CDB[4]` = Address 的 Low Byte (LSB)。
+- **遞增公式**：`addr = start_address + chunk_index * 0x80`。
+- **邊界確認**：28KB 韌體 (224 × 128B) 的 Address 範圍為 `0x0000 ~ 0x6F80`，完全在 16-bit 範圍內。
+- **`build_cdb()` 設計原則**：
+  1. **回傳新 list**，不可修改原始 `base_cdb`（防止狀態污染）。
+  2. **僅覆寫 Byte 3 與 Byte 4**，其他 12 個 Byte 完整保留模板值。
+  3. **靜態方法**（`@staticmethod`），方便獨立單元測試。
+
+### 9.4 Worker Thread 與 GUI 安全的設計模式
+
+```python
+# ✅ 正確：所有 GUI 回呼透過 root.after 切回主執行緒
+self.engine.start(
+    drive_num,
+    progress_cb=lambda cur, tot, addr: self.root.after(0, self._on_progress, cur, tot, addr),
+    log_cb=lambda msg: self.root.after(0, self.t4_log, msg),
+    done_cb=lambda ok, msg: self.root.after(0, self._on_done, ok, msg),
+)
+
+# ❌ 錯誤：從 Worker Thread 直接修改 Tkinter 元件（會導致隨機崩潰）
+# self.t4_progress['value'] = current  # NEVER do this from worker thread
+```
+
+- **Abort 機制**：使用 `threading.Event` 而非 boolean flag，因為 Event 是 thread-safe 的。
+- **資源釋放**：`finally` 區塊中無條件 close_drive，並在 lock 成功時才 unlock，防止 handle 洩漏。
+
+### 9.5 全面性單元測試方法論 (7 層覆蓋策略)
+
+| 層次 | 類別 | 測試目的 | 項數 |
+|---|---|---|---|
+| 1 | 純函式 (Natural Sort) | 演算法正確性，邊界案例 | 4 |
+| 2 | 靜態方法 (Address 計算) | 位元組計算精確度，不可變性保證 | 8 |
+| 3 | 類別狀態 (CDB 模板) | 不同輸入格式的容錯，截斷與補零 | 5 |
+| 4 | 檔案系統 IO (分塊載入) | 真實 tempdir 讀寫，排序/過濾/錯誤訊息 | 9 |
+| 5 | Mock 整合 (Worker Thread) | `@patch` 模擬 SPTD，驗證傳輸流程/中斷/回呼 | 6 |
+| 6 | GUI 元件 (Tkinter) | 元件存在性、預設值、互動邏輯 | 9 |
+| 7 | 狀態機邊界 | 初始狀態、空 chunks 防呆 | 2 |
+
+**關鍵原則**：
+- **Layer 5 (Mock 整合測試)** 是韌體更新功能最關鍵的測試層。使用 `@patch` 攔截 `send_scsi_command`、`open_drive`、`lock_drive` 等底層函式，完全不需要真實硬體即可驗證完整傳輸流程、錯誤中斷與 Abort 機制。
+- **Layer 4 (檔案系統 IO)** 使用 `tempfile.mkdtemp()` 建立臨時目錄，`tearDown` 時 `shutil.rmtree()` 確保清理。
+- **所有 Worker Thread 測試** 使用 `threading.Event` 等待 `done_cb` 呼叫，設定 `timeout=5` 避免死鎖掛住 CI。
 
 ---
 
@@ -730,6 +803,34 @@ BusHound/
 
 ---
 
+### 2026-08-16 Session 10 — Tab 4 MCU 韌體更新功能實作（Claude Opus 4.6）
+
+#### 需求
+使用者需要對 MCU 設備進行 SCSI 韌體更新：指定資料夾匯入已拆分的 128-Byte 分塊 .bin 檔案，CDB 模板透過匯入方式載入，Address 從 `0x0000` 起始對應 `CDB[3]`(MSB)、`CDB[4]`(LSB)，每成功傳送一塊後 Address 自動 `+0x80`。韌體總大小約 28KB（224 塊），16-bit Address 足夠涵蓋。
+
+#### 完成項目
+
+1. **新增獨立後端引擎 [`src/firmware_updater.py`](file:///c:/Users/asd55/OneDrive/桌面/code/myGit/codePractice/Python_Tool/BusHound/src/firmware_updater.py)**：
+   - `natural_sort_key()`：Regex 自然排序，解決 `chunk_10.bin` 排在 `chunk_2.bin` 前面的問題。
+   - `FirmwareUpdateEngine`：載入 128B 分塊、CDB 模板載入、`build_cdb()` 動態組裝 Address Byte 3/4、Worker Thread 背景同步傳輸迴圈、Abort 中斷機制。
+2. **新增 Tab 4 GUI ([`src/BusHound.py`](file:///c:/Users/asd55/OneDrive/桌面/code/myGit/codePractice/Python_Tool/BusHound/src/BusHound.py))**：
+   - 資料夾瀏覽器 + 載入統計（檔案數、總大小、預計結束 Address）。
+   - 16 格 CDB Hex Entry（Byte 3/4 標註 Addr H/L）+ `.bin` 匯入。
+   - 起始 Address Hex 輸入框。
+   - `ttk.Progressbar` 進度條 + 即時百分比/Address 狀態列。
+   - 開始/中止按鈕 + 黑底綠字 Consolas Terminal Log。
+   - 完全獨立於 Tab 1/2/3，零破壞既有功能。
+3. **單元測試擴充至 62 項全數 PASS ([`tests/test_firmware.py`](file:///c:/Users/asd55/OneDrive/桌面/code/myGit/codePractice/Python_Tool/BusHound/tests/test_firmware.py))**：
+   - 自然排序驗證（2 項）、Address 遞增精確計算（6 項）、CDB 模板載入（2 項）、分塊載入與異常防呆（5 項）、GUI Tab 4 存在性（6 項）。
+
+#### 本次修改檔案
+- `src/firmware_updater.py`：【NEW】MCU 韌體更新引擎
+- `src/BusHound.py`：新增 Tab 4 GUI、import firmware_updater
+- `tests/test_firmware.py`：【NEW】韌體更新單元測試 (21 項)
+- `dist/BusHound.exe` & `BusHound.7z`：重新封裝並發布
+- `SKILL.md`：記錄 Session 10 Changelog
+
+---
 
 
 > 下次 AI 接手時，請先讀此節，從「尚未完成」清單挑選目標繼續。

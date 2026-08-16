@@ -206,6 +206,53 @@ def run():
     root.update()
     capture_hwnd_to_png(hwnd, os.path.join(os.path.dirname(__file__), "assets", "screenshot_tab3_sniffer.png"))
 
+    # 4. 產生 Tab 4 (MCU FW Update) 截圖
+    app.notebook.select(app.tab4)
+    app.t4_dir_entry.delete(0, tk.END)
+    app.t4_dir_entry.insert(0, r"C:\Firmware\MCU_v2.1_Chunks_28KB")
+    app.t4_dir_info_lbl.config(
+        text="已載入 224 個檔案 (總大小: 28,672 Bytes, 預計結束 Address: 0x7000)",
+        fg="#1B5E20"
+    )
+    
+    fw_cdb = ["2A", "00", "00", "00", "00", "00", "00", "00", "00", "80", "00", "00", "00", "00", "00", "00"]
+    for i, val in enumerate(fw_cdb):
+        app.t4_cdb_entries[i].delete(0, tk.END)
+        app.t4_cdb_entries[i].insert(0, val)
+        
+    app.t4_start_addr_entry.delete(0, tk.END)
+    app.t4_start_addr_entry.insert(0, "0000")
+    
+    app.t4_progress['maximum'] = 224
+    app.t4_progress['value'] = 224
+    app.t4_status_lbl.config(
+        text="✅ 韌體更新完成！共 224 塊 / 28,672 Bytes (100.0%)  |  結束 Address: 0x6F80  |  耗時: 1.48s",
+        fg="#1B5E20"
+    )
+    
+    app.t4_log_txt.delete(1.0, tk.END)
+    app.t4_log("============================================================")
+    app.t4_log("韌體更新啟動 — 目標: PhysicalDrive1 - CT500MX500SSD1 (500GB)")
+    app.t4_log("分塊數: 224, Address 範圍: 0x0000 → 0x6F80, 單塊長度: 128 Bytes")
+    app.t4_log("============================================================")
+    app.t4_log("[FW Update] 開啟 PhysicalDrive1...")
+    app.t4_log("[FW Update] 磁碟獨佔鎖定成功 (FSCTL_LOCK_VOLUME)")
+    app.t4_log("  Chunk   1/224 (0x0000): CDB[3..4]=00 00 -> Status: 0x00 (GOOD)")
+    app.t4_log("  Chunk   2/224 (0x0080): CDB[3..4]=00 80 -> Status: 0x00 (GOOD)")
+    app.t4_log("  Chunk   3/224 (0x0100): CDB[3..4]=01 00 -> Status: 0x00 (GOOD)")
+    app.t4_log("  Chunk   4/224 (0x0180): CDB[3..4]=01 80 -> Status: 0x00 (GOOD)")
+    app.t4_log("  Chunk   5/224 (0x0200): CDB[3..4]=02 00 -> Status: 0x00 (GOOD)")
+    app.t4_log("  ...")
+    app.t4_log("  Chunk 222/224 (0x6E80): CDB[3..4]=6E 80 -> Status: 0x00 (GOOD)")
+    app.t4_log("  Chunk 223/224 (0x6F00): CDB[3..4]=6F 00 -> Status: 0x00 (GOOD)")
+    app.t4_log("  Chunk 224/224 (0x6F80): CDB[3..4]=6F 80 -> Status: 0x00 (GOOD)")
+    app.t4_log("[FW Update] 磁碟鎖定已釋放")
+    app.t4_log("[FW Update] 磁碟已關閉")
+    app.t4_log("[FW Update] ✅ 韌體更新完成！共 224 塊 / 28,672 Bytes / 耗時 1.48 秒")
+    
+    root.update()
+    capture_hwnd_to_png(hwnd, os.path.join(os.path.dirname(__file__), "assets", "screenshot_tab4_fw_update.png"))
+
     root.destroy()
 
 if __name__ == "__main__":
