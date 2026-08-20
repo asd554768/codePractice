@@ -43,8 +43,7 @@ class TestGuiLogic(unittest.TestCase):
         for e in self.gui.t2_entries:
             self.assertEqual(e.get(), "00")
 
-    @patch("tkinter.messagebox.askyesno", return_value=True)
-    def test_tab2_auto_parse_length_apply(self, mock_ask):
+    def test_tab2_auto_parse_length_apply(self):
         # 構造 64 bytes 資料，Offset 40~43 設為 0x00000004 (4 sectors -> 16 bytes)
         raw_payload = bytearray([0] * 64)
         raw_payload[40:44] = (4).to_bytes(4, byteorder="little")
@@ -55,19 +54,18 @@ class TestGuiLogic(unittest.TestCase):
 
         self.assertEqual(self.gui.t2_len_entry.get(), "16")
 
-    @patch("tkinter.messagebox.askyesno", return_value=False)
-    def test_tab2_auto_parse_length_reject(self, mock_ask):
+    def test_tab2_auto_parse_length_zero_no_overwrite(self):
+        """transfer_length == 0 時不應覆蓋既有值"""
         self.gui.t2_len_entry.delete(0, tk.END)
-        self.gui.t2_len_entry.insert(0, "0")
+        self.gui.t2_len_entry.insert(0, "512")
 
-        raw_payload = bytearray([0] * 64)
-        raw_payload[40:44] = (4).to_bytes(4, byteorder="little")
+        raw_payload = bytearray([0] * 64)  # Offset 40~43 全 0 → raw_val=0 → transfer_length=0
 
         with patch("tkinter.filedialog.askopenfilename", return_value="dummy.bin"), \
              patch("builtins.open", unittest.mock.mock_open(read_data=bytes(raw_payload))):
             self.gui.t2_load_64b_bin()
 
-        self.assertEqual(self.gui.t2_len_entry.get(), "0")
+        self.assertEqual(self.gui.t2_len_entry.get(), "512")
 
     def test_tab2_auto_parse_length_exceed_max(self):
         self.gui.t2_len_entry.delete(0, tk.END)

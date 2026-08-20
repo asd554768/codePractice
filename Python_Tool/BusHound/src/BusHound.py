@@ -307,7 +307,7 @@ class ScsiToolGUI:
                         self.t2_entries[i].delete(0, tk.END)
                         self.t2_entries[i].insert(0, f"{byte:02X}")
                 
-                # BUG-4 fix: 加上限保護 + 讓使用者確認自動解析值
+                # 自動解析 Offset 40~43 的傳輸長度並靜默套用
                 if len(data) >= 44:
                     length_bytes = data[40:44]
                     raw_val = int.from_bytes(length_bytes, byteorder='little')
@@ -315,18 +315,9 @@ class ScsiToolGUI:
                     if transfer_length > MAX_TRANSFER_BYTES:
                         self.t2_log(f"[Auto-Parse] ⚠️ 解析長度 {transfer_length} Bytes 超出安全上限 ({MAX_TRANSFER_BYTES // 1024 // 1024}MB)，已略過自動填入")
                     elif transfer_length > 0:
-                        ok = messagebox.askyesno(
-                            "確認自動解析長度",
-                            f"從 Offset 40-43 解析出：\n"
-                            f"  Raw value: 0x{raw_val:08X} (×4 = {transfer_length} Bytes)\n\n"
-                            f"是否套用此長度？"
-                        )
-                        if ok:
-                            self.t2_len_entry.delete(0, tk.END)
-                            self.t2_len_entry.insert(0, str(transfer_length))
-                            self.t2_log(f"[Auto-Parse] 已套用長度: {transfer_length} Bytes (raw=0x{raw_val:08X})")
-                        else:
-                            self.t2_log(f"[Auto-Parse] 使用者略過自動長度填入")
+                        self.t2_len_entry.delete(0, tk.END)
+                        self.t2_len_entry.insert(0, str(transfer_length))
+                        self.t2_log(f"[Auto-Parse] 已自動套用長度: {transfer_length} Bytes (raw=0x{raw_val:08X})")
 
     def t2_load_data_file(self):
         path = filedialog.askopenfilename(title="選擇 Data Out Bin 檔案")
