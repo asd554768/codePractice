@@ -1,0 +1,15 @@
+# NVMe Get Log Page 批次測試範例檔
+# 欄位規範：僅需填寫 LID 與 Length 兩欄 (大小寫不拘)
+# LID: 支援十六進位 (如 0x02) 或十進位 (如 2)
+# Length: 支援純 Byte 數 (如 512, 1024) 或帶單位 (如 4KB, 64K, 1)
+
+LID,Length
+0x02,512       # SMART / Health Information (512 Bytes)
+0x02,512       # SMART / Health Information (512 Bytes)
+0x02,512       # SMART / Health Information (512 Bytes)
+0x02,512       # SMART / Health Information (512 Bytes)
+0x06,512       # Device Self-test (512 Bytes)
+0x81,512       # Sanitize Status (512 Bytes)
+0xC0,64        # Vendor Specific Log Page (64 Bytes)
+0x02,4         # 測試最小非對齊長度 (4 Bytes)
+0x02,1         # 測試 1 Byte (底層自動向上對齊並裁切)

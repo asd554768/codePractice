@@ -1,0 +1,32 @@
+Index,LID,LID_Name,Length,Status_Code,Latency_ms,Result,Error_Message
+1,0x02,SMART_Health_Information,512,-1,0.23,FAIL,"Get Log Page (LID=0x02) 執行失敗。
+Protocol-Query 錯誤: DeviceIoControl (Protocol-Query) failed with Windows error 1117
+Pass-Through 錯誤: name 'total_size' is not defined"
+2,0x02,SMART_Health_Information,512,-1,0.24,FAIL,"Get Log Page (LID=0x02) 執行失敗。
+Protocol-Query 錯誤: DeviceIoControl (Protocol-Query) failed with Windows error 1117
+Pass-Through 錯誤: name 'total_size' is not defined"
+3,0x02,SMART_Health_Information,512,-1,0.26,FAIL,"Get Log Page (LID=0x02) 執行失敗。
+Protocol-Query 錯誤: DeviceIoControl (Protocol-Query) failed with Windows error 1117
+Pass-Through 錯誤: name 'total_size' is not defined"
+4,0x02,SMART_Health_Information,512,-1,0.24,FAIL,"Get Log Page (LID=0x02) 執行失敗。
+Protocol-Query 錯誤: DeviceIoControl (Protocol-Query) failed with Windows error 1117
+Pass-Through 錯誤: name 'total_size' is not defined"
+5,0x06,Device_Self_Test,512,-1,0.35,FAIL,"Get Log Page (LID=0x06) 執行失敗。
+Protocol-Query 錯誤: DeviceIoControl (Protocol-Query) failed with Windows error 1117
+Pass-Through 錯誤: name 'total_size' is not defined"
+6,0x81,Sanitize_Status,512,-1,0.27,FAIL,"Get Log Page (LID=0x81) 執行失敗。
+Protocol-Query 錯誤: DeviceIoControl (Protocol-Query) failed with Windows error 1117
+Pass-Through 錯誤: name 'total_size' is not defined"
+7,0xC0,Vendor_Specific_0xC0,64,-1,0.23,FAIL,"Get Log Page (LID=0xC0) 執行失敗。
+Pass-Through 錯誤: name 'total_size' is not defined
+Protocol-Query 錯誤: DeviceIoControl (Protocol-Query) failed with Windows error 1117"
+8,0x02,SMART_Health_Information,4,-1,0.23,FAIL,"Get Log Page (LID=0x02) 執行失敗。
+Protocol-Query 錯誤: DeviceIoControl (Protocol-Query) failed with Windows error 1117
+Pass-Through 錯誤: name 'total_size' is not defined"
+9,0x02,SMART_Health_Information,1,-1,0.24,FAIL,"Get Log Page (LID=0x02) 執行失敗。
+Protocol-Query 錯誤: DeviceIoControl (Protocol-Query) failed with Windows error 1117
+Pass-Through 錯誤: name 'total_size' is not defined"
+
+Total,9
+Pass,0
+Fail,9

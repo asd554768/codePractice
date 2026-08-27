@@ -1,0 +1,20 @@
+Index,LID,LID_Name,Length,Status_Code,Latency_ms,Result,Error_Message
+1,0x02,SMART_Health_Information,512,0x0,1.26,PASS,
+2,0x02,SMART_Health_Information,512,0x0,1.25,PASS,
+3,0x02,SMART_Health_Information,512,0x0,1.24,PASS,
+4,0x02,SMART_Health_Information,512,0x0,1.26,PASS,
+5,0x06,Device_Self_Test,512,-1,0.42,FAIL,"Get Log Page (LID=0x06) 執行失敗。
+Protocol-Query 錯誤: DeviceIoControl (Protocol-Query) failed with Windows error 1
+Pass-Through 錯誤: DeviceIoControl (Pass-Through) failed with Windows error 317
+Miniport-Pass-Through 錯誤: DeviceIoControl (Miniport-Pass-Through) failed with Windows error 1"
+6,0x81,Sanitize_Status,512,0x0,2.00,PASS,
+7,0xC0,Vendor_Specific_0xC0,64,-1,18.27,FAIL,"Get Log Page (LID=0xC0) 執行失敗。
+Pass-Through 錯誤: DeviceIoControl (Pass-Through) failed with Windows error 317
+Miniport-Pass-Through 錯誤: DeviceIoControl (Miniport-Pass-Through) failed with Windows error 1
+Protocol-Query 錯誤: DeviceIoControl (Protocol-Query) failed with Windows error 1117"
+8,0x02,SMART_Health_Information,4,0x0,1.32,PASS,
+9,0x02,SMART_Health_Information,1,0x0,1.26,PASS,
+
+Total,9
+Pass,7
+Fail,2
