@@ -14,6 +14,8 @@
 6. [六、 Log 文字解析與 HardFault 除錯 (Log & Crash Parsing)](#六-log-文字解析與-hardfault-除錯)
 7. [七、 Token 最佳化與成本控制技巧 (Token Optimization)](#七-token-最佳化與成本控制技巧)
 8. [八、 2026 開源工具鏈對照落地指南 (Grenade.tw 工具鏈)](#八-2026-開源工具鏈對照落地指南)
+9. [九、 Subagent 多代理角色分工與協作流水線 (Multi-Subagent Pipeline)](#九-subagent-多代理角色分工與協作流水線)
+10. [十、 Session 生命週期與跨對話狀態持久化 (Session Lifecycle & Memory)](#十-session-生命週期與跨對話狀態持久化)
 
 ---
 
@@ -162,6 +164,59 @@ firmware-dev-ai/
 
 ---
 
+## 九、 Subagent 多代理角色分工與協作流水線
+
+針對中大型韌體專案（含 BSP、HAL、RTOS 中介層、通訊協定與應用層），單一 Agent 容易發生 Context 爆炸與硬體暫存器幻覺。採用 **Subagent 職責隔離流水線**：
+
+```
+                    [ Supervisor 主控 Agent ]
+                               │
+       ┌───────────────────────┼───────────────────────┐
+       ▼                       ▼                       ▼
+[ 1. 介面與架構 ]       [ 2. 驅動與暫存器實作 ]   [ 3. 併發與安全審查 ]
+• Subagent: Architect  • Subagent: Driver      • Subagent: Safety Auditor
+• 輸出: .h 介面規格     • 遵循 P0 護欄生成 .c    • 稽核 volatile/Critical Section
+```
+
+### 1. 角色職責劃分
+1. **`Firmware-Architect`**：負責系統頂層架構、記憶體分區（DTCM/SRAM/Flash）預算、模組公開介面 (`.h`) 定義。
+2. **`Driver-Implementer`**：負責週邊驅動與 ISR 實作，強制執行 P0 護欄（無 malloc、DMA 快取一致性）。
+3. **`Safety-Auditor`**：專門稽核中斷競態 (Race Condition)、`volatile` 缺失、Stack 溢位風險與 MISRA-C:2012 合規性。
+4. **`HardFault-Debugger`**：專門負責 Cortex-M SCB 暫存器 Dump 解析、反組譯 PC/LR 追蹤與時序問題分析。
+
+### 2. 最小必要上下文傳遞 (Bounded Context Handoff)
+主控 Agent 派發任務時，**禁止傳遞整個 Codebase**，僅傳遞：
+* 目標模組 Header 檔與相依 Signature。
+* 硬體環境規範（MCU 核心、時脈、快取設定）。
+* 該任務需遵循之 P0/P1 限制條件。
+
+---
+
+## 十、 Session 生命週期與跨對話狀態持久化
+
+韌體開發週期長，對話 Session 易因 Token 上限或開發中斷而丟失硬體與除錯狀態。建立 **三層式 Session 狀態機**：
+
+### 1. 三層記憶體架構
+* **L1 (Turn State / 瞬時狀態)**：單次問答之臨時暫存器 Dump、反組譯片段（完成即丟棄）。
+* **L2 (Working Session / 任務狀態)**：單次除錯或功能開發期間之 Context Card（MCU 型號、進行中待辦、待測假設）。
+* **L3 (Persistent Memory / 跨對話持久記憶)**：記錄於專案 `.ai/firmware_context.md` 或 Codebase Memory MCP。包含：
+  * 已知晶片硬體 Errata 與 Workaround。
+  * 專案專屬暫存器避坑清單。
+  * 團隊不可妥協之 P0 硬規則。
+
+### 2. Session 斷點交接機制 (Handover Manifest)
+當對話 Context 接近 70% 滿載或需切換 Session 時，由 Agent 自動輸出 `Session Handover Manifest`：
+* **已完成進度與結論**（如：已確認暫存器配置正確）。
+* **當前瓶頸與懸掛問題**（如：SPI RX 在 10Mbps 觸發 Overrun）。
+* **下個 Session 啟動建議**（指定下個 Subagent 接手驗證項目）。
+
+### 3. Subagent 超時中斷檢測與 Checkpoint 斷點續傳機制
+* **檢查點檔案**：維護 `.ai/session_checkpoint.json`，記錄每個任務狀態（`COMPLETED`, `TIMEOUT`, `BLOCKED`）與殘留產物路徑（`partial_artifact`）。
+* **超時攔截面板**：當發生 Timeout 時，主控強制暫停盲目重新生成，輸出「未完成任務看板」，明確標記哪些已完成（跳過）、哪些 Timeout（續傳）、哪些 Blocked（等待）。
+* **無縫接關原則**：新 Session 自動載入檢查點，鎖定已完成項目，並將殘留代碼傳遞給 Subagent 進行精確斷點續寫。
+
+---
+
 ## 🚀 落地執行檢查清單 (Action Checklist)
 
 - [x] 在本機與 Git 專案建立 `firmware-dev-ai/SKILL.md`
@@ -169,3 +224,8 @@ firmware-dev-ai/
 - [x] 在 Continue.dev 配置 `/doxygen`, `/flow`, `/review`, `/rca` 指令
 - [x] 建立劃分 Context (P2), Workflows (P1), Guardrails (P0) 的企業知識庫架構
 - [x] 驗證 Draw.io XML 與 Mermaid 流程圖生成流程
+- [x] 建立 Subagent 多代理分工矩陣 (Architect / Driver / Auditor / RCA)
+- [x] 部署專案級 `.ai/firmware_context.md` 與 Session Handover 斷點交接機制
+- [x] 實裝 `.ai/session_checkpoint.json` 超時攔截與任務斷點續傳協議
+
+
