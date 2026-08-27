@@ -26,3 +26,5 @@ assets/
 *.jpg
 *.jpeg
 
+# Source code files
+src/
