@@ -29,6 +29,8 @@ description: >-
 9. [模組八：Continue.dev IDE 整合設定 (IDE Integration)](#模組八continuedev-ide-整合設定)
 10. [模組九：Grenade.tw 60 個精選工具對照表 (2026 Recommended Stack)](#模組九grenadetw-2026-精選-claude-skills--github-開源專案對照與記錄)
 11. [模組十一：企業與團隊知識封裝原則 (Enterprise Knowledge Packaging)](#module-11-企業與團隊知識封裝原則-enterprise-knowledge-packaging)
+12. [模組十二：Subagent 多代理協作架構 (Multi-Subagent Swarm for Firmware)](#module-12-subagent-多代理協作架構-multi-subagent-swarm)
+13. [模組十三：Session 生命週期與持久化記憶體管理 (Session Lifecycle & Persistent Memory)](#module-13-session-生命週期與持久化記憶體管理-session-lifecycle)
 
 ---
 
@@ -36,7 +38,7 @@ description: >-
 
 當接收到使用者任務時，AI 模型請依照以下**決策樹 (Decision Tree)** 優先跳轉至相應模組：
 
-`
+```
 [使用者請求]
   │
   ├── 1. 任務：理解程式流程 / 繪製流程圖 / 分析 Call Graph
@@ -54,9 +56,15 @@ description: >-
   ├── 5. 任務：設定本地 Ollama 開源模型 / 配置 IDE 擴充功能
   │    └── 📖 跳轉：[模組二] 模型與 Modelfile 設定  ➔  [模組八] Continue.dev 設定
   │
-  └── 6. 任務：尋找其他開發工具 / 評估開源專案
+  ├── 6. 任務：複雜韌體專案多 Agent 派發 / 子任務平行處理
+  │    └── 📖 跳轉：[模組十二] Subagent 協作架構 (Architect / Driver / Safety Auditor / RCA)
+  │
+  ├── 7. 任務：跨對話狀態恢復 / Session 中斷重啟 / 專案長期記憶維護
+  │    └── 📖 跳轉：[模組十三] Session 生命週期與持久化記憶體
+  │
+  └── 8. 任務：尋找其他開發工具 / 評估開源專案
        └── 📖 跳轉：[模組一] 現有 Skill 分析  ➔  [模組九] 60 個工具對照表
-`
+```
 
 ---
 
@@ -580,3 +588,205 @@ NOTE: Core mental model:
 > *【硬限制 P0】禁止在 ISR 中使用阻塞式延遲 (delay)；*
 > *【條件路由 P1】若涉及 DMA 傳輸，請優先讀取 `references/dma_cache_rules.md`；*
 > *【背景 P2】如需確認暫存器欄位意義，請參考 `references/uart_map.md`。"*
+
+---
+
+## Module 12: Subagent 多代理協作架構 (Multi-Subagent Swarm for Firmware)
+
+大型韌體專案具有「硬體相依深、記憶體邊界嚴格、並行與中斷競態複雜」的特性。單一 Context 容易產生資訊過載與幻覺。透過 **Subagent 職責隔離**，將複雜任務分解為平行或流水線子任務。
+
+### 1. 韌體專屬 Subagent 角色矩陣 (Firmware Subagent Roles)
+
+```
+                       [ 主控代理 Supervisor / Parent Agent ]
+                                         │
+        ┌───────────────────┬────────────┴───────────┬───────────────────┐
+        ▼                   ▼                        ▼                   ▼
+ ┌──────────────┐   ┌──────────────┐         ┌──────────────┐   ┌──────────────┐
+ │ Architect    │   │ Driver-Dev   │         │ Safety-Audit │   │ Crash-RCA    │
+ │ 架構與介面   │   │ 底層驅動實作 │         │ 競態與靜態驗證│   │ HardFault分析│
+ └──────────────┘   └──────────────┘         └──────────────┘   └──────────────┘
+```
+
+| Subagent 角色 | 專精職責 (Specialization) | 推薦模型等級 | 輸入邊界 (Context Scope) | 關鍵輸出產物 |
+|---|---|:---:|---|---|
+| **`Firmware-Architect`** | 系統拓撲、模組介面 (`.h`) 定義、Memory Map 劃分、RTOS 任務優先級規劃 | `pro` / `32B` | 系統需求、硬體規格表 | `module_api.h`、Mermaid 架構圖、記憶體預算表 |
+| **`Driver-Implementer`** | 暫存器操作、DMA 傳輸、ISR 實作、周邊初始化 (Strict P0 Guardrails) | `inherit` / `14B` | 單一驅動 `.h`、Datasheet 暫存器切片 | `driver.c` (含硬體安全防護) |
+| **`Safety-Auditor`** | ISR 競態、Critical Section 覆蓋、`volatile` 稽核、MISRA-C:2012 違規、Stack 深度預估 | `pro` / `DeepSeek-R1` | 呼叫圖、共享變數表、相關實作 | 安全風險矩陣 (Severity/Fix) |
+| **`HardFault-Debugger`** | SCB 暫存器 Dump 解析、反組譯 PC/LR Traceback、時序與 DMA 競態根因定位 | `flash` / `14B` | Register Dump、反組譯 `.list`、Log | RCA 報告、根因假設、修復建議 |
+| **`Doxygen-Doc-Writer`** | 程式碼註解、SDS 詳細模組設計規格書（嚴禁改動程式邏輯） | `flash_lite` / `1.5B` | 函式實作、公開介面 | Doxygen 註解、Markdown SDS 文件 |
+
+### 2. Subagent 協作通信協議與資料結構 (Inter-Agent Protocol)
+
+主控 Agent 向 Subagent 派發任務時，必須傳遞 **最小必要上下文 (Bounded Context Payload)**，並要求結構化 JSON/Markdown 回傳：
+
+#### 任務派發 Payload 規範：
+```json
+{
+  "task_id": "TASK_UART_DMA_001",
+  "subagent_role": "Driver-Implementer",
+  "target_hardware": {
+    "mcu": "STM32H7B3",
+    "core": "Cortex-M7",
+    "d_cache": true
+  },
+  "guardrails": [
+    "P0: NO dynamic memory allocation (malloc)",
+    "P0: D-Cache Invalidate required before DMA read",
+    "P0: ISR execution time < 5us"
+  ],
+  "context_files": [
+    "inc/bsp_uart.h"
+  ],
+  "objective": "Implement bsp_uart_receive_dma() with circular buffer mode"
+}
+```
+
+#### Subagent 回傳產物規範：
+```markdown
+### [Subagent 產物: Driver-Implementer]
+* **任務狀態**: COMPLETED
+* **P0 Guardrails 遵循確認**: ✅ 無 malloc / ✅ 快取一致性處理 (SCB_InvalidateDCache_by_Addr)
+* **產出代碼**: (提供精簡代碼區塊)
+* **未決疑點/硬體假設**: 假設 DMA Buffer 已放置於 D1 SRAM (0x24000000) 非 Cacheable 區段
+* **移交建議**: 請 `Safety-Auditor` 驗證 `bsp_uart_rx_isr` 與主迴圈存取 Buffer 之原子性
+```
+
+---
+
+## Module 13: Session 生命週期與持久化記憶體管理 (Session Lifecycle & Persistent Memory)
+
+韌體開發週期長且硬體細節繁複，AI 對話容易因 Context 溢出或連線中斷丟失狀態。建立 **三層式 Session 狀態機** 與 **跨 Session 記憶體機制**：
+
+### 1. 三層式 Session 狀態架構 (3-Tier State Architecture)
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ L3: 專案持久化記憶體 (Project Persistent Memory)              │
+│ 儲存於專案 `.ai/firmware_context.md` 或 Codebase Memory MCP  │
+│ 內容: MCU Errata 規避方案、硬體暫存器防坑表記錄、團隊 P0 硬規則 │
+└──────────────────────────────┬───────────────────────────────┘
+                               │ (Session 初始化載入)
+┌──────────────────────────────▼───────────────────────────────┐
+│ L2: 工作 Session 狀態 (Working Feature/Debug Session)        │
+│ 儲存於目前任務 Context Card (當前 MCU、RTOS 設定、進行中任務清單)│
+└──────────────────────────────┬───────────────────────────────┘
+                               │ (動態執行派發)
+┌──────────────────────────────▼───────────────────────────────┐
+│ L1: 瞬時 Context (Active Turn / In-Flight State)              │
+│ 執行中的單一函式、臨時反組譯 Dump、Scratch 變數 (結束即銷毀)   │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### 2. Session Context Card 模板 (`.ai/firmware_context.md`)
+
+在專案根目錄建立持久化檔案，每個新 Session 啟動或重啟時自動注入：
+
+```markdown
+# [專案名稱] Firmware Session Persistent State
+
+## 1. 核心硬體與編譯環境 (L3 Immutable Context)
+- MCU: STM32H743IIT6 (Cortex-M7 @ 480MHz, D-Cache ENABLED)
+- RTOS: FreeRTOS v10.4.1 (Static Allocation Only)
+- Toolchain: arm-none-eabi-gcc 12.3.rel1 (-O2, -Wall, -Wextra)
+- Memory Boundaries: DTCM (128KB), AXI-SRAM (512KB), SRAM4 (64KB - Non-Cacheable DMA)
+
+## 2. 團隊護欄 (P0 Guardrails)
+- ❌ 禁用 `malloc` / `free`
+- ❌ 禁用全域 `__disable_irq()` 超過 10µs
+- ✅ ISR 共享變數必須標記 `volatile` 並使用 `taskENTER_CRITICAL_FROM_ISR`
+
+## 3. 已知硬體 Errata 與 Workarounds (硬體避坑庫)
+- Errata 2.2.1: SPI2 DMA TX underflow -> 傳輸前需額外預填 1 Byte Dummy
+- I2C1 偶發卡死在 BUSY 旗標 -> 初始化時需發送 9 個 Clock Pulse 重置匯流排
+```
+
+### 3. Session 斷點續傳與壓縮交接協議 (Session Compaction & Handover)
+
+當目前對話 Context 消耗超過 **70%** 或即將開啟新對話時，執行 **Session Handover Manifest** 生成：
+
+```markdown
+### 🔄 Session 狀態交接清單 (Handover Manifest)
+* **當前任務進度**: 已完成 `drv_spi.c` DMA 發送，正在除錯 `drv_spi_rx_isr` 丟包問題。
+* **已驗證邏輯**:
+  1. GPIO 與 SPI 暫存器配置已核對 Datasheet 無誤。
+  2. TX DMA FIFO 門檻設定正確。
+* **懸掛問題 (Pending Issues)**:
+  - RX 在 10Mbps 速率下觸發 Overrun Error (OVR)。
+* **下個 Session 執行起點**:
+  - 由 `Safety-Auditor` 檢查 RX FIFO 讀取時序與中斷優先級配置。
+```
+
+---
+
+### 4. Subagent 超時中斷檢測與 Checkpoint 斷點續傳機制 (Timeout & Resume Protocol)
+
+當 Subagent 因伺服器重啟、網路中斷、推理死鎖或超時 (Timeout) 未完成時，主控 Agent 必須具備 **狀態盤點** 與 **下次無縫續傳** 能力。
+
+#### (1) 狀態檢查點結構 (`.ai/session_checkpoint.json`)
+
+在每次派發任務與 Subagent 回傳時，自動維護以下狀態檔：
+
+```json
+{
+  "session_id": "SES_20260827_001",
+  "last_updated": "2026-08-27T23:30:00Z",
+  "session_status": "INTERRUPTED",
+  "task_pipeline": [
+    {
+      "task_id": "T01_ARCH_SPEC",
+      "subagent_role": "Firmware-Architect",
+      "status": "COMPLETED",
+      "artifact_path": "inc/drv_spi.h",
+      "completed_at": "2026-08-27T23:15:00Z"
+    },
+    {
+      "task_id": "T02_DRIVER_IMPL",
+      "subagent_role": "Driver-Implementer",
+      "status": "TIMEOUT",
+      "retry_count": 1,
+      "last_error": "Subagent execution timed out after 300s",
+      "partial_artifact": "scratch/drv_spi_partial.c",
+      "input_payload": {
+        "target": "drv_spi_receive_dma",
+        "guardrails": ["P0: DMA non-cacheable", "P0: No malloc"]
+      }
+    },
+    {
+      "task_id": "T03_SAFETY_AUDIT",
+      "subagent_role": "Safety-Auditor",
+      "status": "BLOCKED",
+      "depends_on": ["T02_DRIVER_IMPL"]
+    }
+  ]
+}
+```
+
+#### (2) 主控 Agent 超時盤點與輸出規範 (Timeout Interceptor)
+
+當主控 Agent 偵測到 Subagent 逾時或中斷時，**必須停止盲目重頭生成**，並輸出以下狀態看板：
+
+```markdown
+⚠️ [SESSION_TIMEOUT_ALERT] 偵測到子任務執行超時或異常中斷！
+
+### 📋 未完成任務看板 (Pending & Timeout Tasks)
+| 任務 ID | 負責 Subagent | 狀態 | 已完成產物 / 進度 | 下次執行動作 |
+|---|---|:---:|---|---|
+| `T01_ARCH_SPEC` | `Firmware-Architect` | ✅ COMPLETED | `inc/drv_spi.h` | 跳過 (已完成) |
+| `T02_DRIVER_IMPL` | `Driver-Implementer` | ⏱️ **TIMEOUT** | 已產出標頭與初版 DMA Init | **優先續傳** (載入 Partial Code 繼續生成) |
+| `T03_SAFETY_AUDIT` | `Safety-Auditor` | ⏸️ BLOCKED | 無 (等待 T02) | 待 T02 完成後自動觸發 |
+
+💾 已自動將狀態封裝至 `.ai/session_checkpoint.json`。
+```
+
+#### (3) 下次 Session 啟動時的自動續傳協議 (Resume Protocol)
+
+任何 Agent 在新 Session 啟動時，執行以下三步無縫接關：
+
+1. **讀取檢查點**：檢查 `.ai/session_checkpoint.json`。
+2. **跳過已完成項目 (Skip COMPLETED)**：鎖定 `status: "COMPLETED"` 的產物，嚴禁重複呼叫 Subagent 重寫。
+3. **續傳超時/阻塞任務 (Resume Incomplete)**：
+   * 讀取 `partial_artifact` 作為上下文傳給對應 Subagent。
+   * 以 Prompt 提示：`"前次執行於 drv_spi_receive_dma() 中斷，請從該函式接續實作，禁止重複輸出已完成的 drv_spi_init()。"`
+   * 完成後解除後續任務的 `BLOCKED` 狀態。
+
