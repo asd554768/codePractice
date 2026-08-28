@@ -14,6 +14,7 @@ class GetLogPageCommand:
     rae: int = 0                          # Retain Asynchronous Event
     lsp: int = 0                          # Log Specific Field
     lpo: int = 0                          # Log Page Offset
+    opcode: int = 0x02                    # Admin Opcode (預設 0x02 Get Log Page, 可自定義為 0xC0~0xFF 私有碼)
     
     def __post_init__(self):
         if self.length_bytes is None and self.numd_val is not None:

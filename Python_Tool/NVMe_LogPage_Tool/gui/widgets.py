@@ -46,7 +46,7 @@ class ResultTable(tk.Frame):
         super().__init__(parent, **kwargs)
         self.on_select = on_select
         
-        columns = ("#", "LID", "Log Name", "NUMD", "Length", "CDW10", "Status", "Latency", "Result")
+        columns = ("#", "LID", "Log Name", "NUMD", "Length", "CDW10", "Channel", "Status", "Latency", "Result")
         self.tree = ttk.Treeview(self, columns=columns, show="headings")
         
         for col in columns:
@@ -55,10 +55,11 @@ class ResultTable(tk.Frame):
         
         self.tree.column("#", width=35)
         self.tree.column("LID", width=55)
-        self.tree.column("Log Name", width=170)
+        self.tree.column("Log Name", width=160)
         self.tree.column("NUMD", width=65)
         self.tree.column("Length", width=65)
         self.tree.column("CDW10", width=95)
+        self.tree.column("Channel", width=120)
         self.tree.column("Status", width=65)
         self.tree.column("Latency", width=75)
         self.tree.column("Result", width=65)
@@ -96,6 +97,7 @@ class ResultTable(tk.Frame):
             f"0x{result.numd:02X}",
             f"{result.length_bytes}B",
             f"0x{result.cdw10:08X}",
+            result.channel or "N/A",
             f"0x{result.status_code:02X}" if result.status_code is not None and result.status_code >= 0 else "N/A",
             f"{result.latency_ms:.2f} ms" if result.latency_ms is not None else "N/A",
             result_text

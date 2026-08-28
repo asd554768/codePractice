@@ -1,8 +1,7 @@
-# NVMe Get Log Page 批次測試範例檔
-# 欄位規範：LID, NUMD (亦可填入 NUMDL / Length)
-# LID: 支援十六進位 (如 0x02, 0x01) 或十進位 (如 2, 1)
-# NUMD: 支援十六進位 (如 7F, 0x7F, 0x01) 或十進位 (如 127, 1, 0) 或帶單位 (512B, 4KB)
-# 長度公式：Data Length = (NUMD + 1) * 4 Bytes
+# NVMe Get Log Page 批次測試範例檔 (標準 2 欄格式)
+# 欄位：LID, NUMD
+# - LID: 支援 Hex (0x02, 0xF0) 或 Dec (2, 240)
+# - NUMD: 支援 Hex (0x7F, 0x00, 7F) 或 Dec (127, 0) 或長度 (512B, 4KB)
 
 LID,NUMD
 0x02,7F        # SMART / Health Information (NUMD=0x7F -> 512 Bytes)
@@ -12,5 +11,5 @@ LID,NUMD
 0x06,7F        # Device Self-test (NUMD=0x7F -> 512 Bytes)
 0x81,7F        # Sanitize Status (NUMD=0x7F -> 512 Bytes)
 0xC0,0F        # Vendor Specific (NUMD=0x0F -> 64 Bytes)
-0x02,0x00      # 最小 Dword 測試 (NUMD=0x00 -> 4 Bytes)
-0x02,0x01      # 2 Dwords 測試 (NUMD=0x01 -> 8 Bytes)
+0xF0,0x00      # 自定義 LID 0xF0 (NUMD=0x00 -> 4 Bytes / 1 Dword)
+0x02,0x00      # 最小 1 Dword 測試 (NUMD=0x00 -> 4 Bytes)

@@ -164,12 +164,46 @@ LID,NUMD,Name
         finally:
             os.remove(path)
 
+    def test_custom_opcode_csv(self):
+        content = """OPCODE,LID,NUMD
+0xC0,0xF0,0x00
+0x02,0x02,0x7F
+0xD5,0x01,0x03,CustomVendorLog
+"""
+        path = self._create_temp_csv(content)
+        try:
+            cases = parse_csv(path)
+            self.assertEqual(len(cases), 3)
+            
+            # Case 1: Opcode 0xC0, LID 0xF0, NUMD 0x00 (4B)
+            self.assertEqual(cases[0].opcode, 0xC0)
+            self.assertEqual(cases[0].lid, 0xF0)
+            self.assertEqual(cases[0].numd, 0)
+            self.assertEqual(cases[0].length_bytes, 4)
+            cmd1 = cases[0].to_command()
+            self.assertEqual(cmd1.opcode, 0xC0)
+            self.assertEqual(cmd1.numd, 0)
+            
+            # Case 2: Opcode 0x02, LID 0x02, NUMD 0x7F
+            self.assertEqual(cases[1].opcode, 0x02)
+            self.assertEqual(cases[1].lid, 0x02)
+            self.assertEqual(cases[1].numd, 127)
+            
+            # Case 3: Opcode 0xD5, LID 0x01, NUMD 0x03, Name
+            self.assertEqual(cases[2].opcode, 0xD5)
+            self.assertEqual(cases[2].lid, 0x01)
+            self.assertEqual(cases[2].numd, 3)
+            self.assertEqual(cases[2].lid_name, "CustomVendorLog")
+        finally:
+            os.remove(path)
+
     def test_to_command_conversion(self):
-        case = CsvTestCase(index=1, lid=0x02, numd=127, length_bytes=512, lid_name="SMART")
+        case = CsvTestCase(index=1, lid=0x02, numd=127, length_bytes=512, lid_name="SMART", opcode=0xC0)
         cmd = case.to_command()
         self.assertEqual(cmd.lid, 0x02)
         self.assertEqual(cmd.length_bytes, 512)
         self.assertEqual(cmd.numd, 127)
+        self.assertEqual(cmd.opcode, 0xC0)
 
 
 if __name__ == "__main__":

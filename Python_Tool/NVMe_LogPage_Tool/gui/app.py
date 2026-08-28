@@ -50,11 +50,22 @@ class NvmeLogPageApp:
         
         ttk.Label(params_frame, text="間隔 (ms):").pack(side=tk.LEFT, padx=5)
         self.delay_var = tk.IntVar(value=100)
-        ttk.Spinbox(params_frame, from_=0, to=1000, textvariable=self.delay_var, width=10).pack(side=tk.LEFT, padx=5)
+        ttk.Spinbox(params_frame, from_=0, to=1000, textvariable=self.delay_var, width=8).pack(side=tk.LEFT, padx=5)
         
         ttk.Label(params_frame, text="錯誤策略:").pack(side=tk.LEFT, padx=5)
         self.error_policy_var = tk.StringVar(value=ErrorPolicy.CONTINUE.value)
-        ttk.Combobox(params_frame, textvariable=self.error_policy_var, values=[e.value for e in ErrorPolicy], state="readonly", width=15).pack(side=tk.LEFT, padx=5)
+        ttk.Combobox(params_frame, textvariable=self.error_policy_var, values=[e.value for e in ErrorPolicy], state="readonly", width=12).pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(params_frame, text="通道路徑:").pack(side=tk.LEFT, padx=5)
+        self.channel_var = tk.StringVar(value="自動 (Auto)")
+        self.channel_combo = ttk.Combobox(
+            params_frame,
+            textvariable=self.channel_var,
+            values=["自動 (Auto)", "強制 Direct-MMIO (Ring0)", "微軟 Pass-Through", "微軟 Protocol-Query"],
+            state="readonly",
+            width=22
+        )
+        self.channel_combo.pack(side=tk.LEFT, padx=5)
         
         # 控制區
         control_frame = ttk.Frame(self.root)
@@ -156,6 +167,15 @@ class NvmeLogPageApp:
         delay_ms = self.delay_var.get()
         error_policy = ErrorPolicy(self.error_policy_var.get())
         
+        channel_str = self.channel_var.get()
+        forced_channel = None
+        if "Direct-MMIO" in channel_str:
+            forced_channel = "Direct-MMIO"
+        elif "Pass-Through" in channel_str:
+            forced_channel = "Pass-Through"
+        elif "Protocol-Query" in channel_str:
+            forced_channel = "Protocol-Query"
+        
         self.output_dir = os.path.join(os.getcwd(), "results")
         os.makedirs(self.output_dir, exist_ok=True)
         
@@ -164,7 +184,8 @@ class NvmeLogPageApp:
             test_cases=self.test_cases,
             delay_ms=delay_ms,
             error_policy=error_policy,
-            output_dir=self.output_dir
+            output_dir=self.output_dir,
+            forced_channel=forced_channel
         )
         
         self.runner = BatchRunner(config)

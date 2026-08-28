@@ -18,7 +18,9 @@ def run_cli():
     parser.add_argument("--delay", type=int, default=0, help="測試間隔毫秒 (預設 0)")
     parser.add_argument("--error-policy", choices=["continue", "stop"], default="continue", help="錯誤策略 (預設 continue)")
     
-    parser.add_argument("--lid", type=str, help="單次下發 Log ID (Hex 字串，例如 0x02)")
+    parser.add_argument("--channel", choices=["auto", "mmio", "passthrough", "query"], default="auto", help="強制下發通道 (預設 auto)")
+    parser.add_argument("--opcode", type=str, default="0x02", help="Admin Opcode (Hex 或 Dec，例如 0x02, 0xC0，預設 0x02)")
+    parser.add_argument("--lid", type=str, help="單次下發 Log ID (Hex 字串，例如 0x02, 0xF0)")
     parser.add_argument("--numd", type=str, help="單次下發 NUMD (Hex 或 Dec，例如 0x7F, 7F, 0)")
     parser.add_argument("--length", type=int, help="單次下發 長度(Bytes)")
     
@@ -40,6 +42,14 @@ def run_cli():
         print("錯誤: 必須指定 --device 參數。使用 --scan 查看設備。")
         sys.exit(1)
 
+    forced_ch = None
+    if args.channel == "mmio":
+        forced_ch = "Direct-MMIO"
+    elif args.channel == "passthrough":
+        forced_ch = "Pass-Through"
+    elif args.channel == "query":
+        forced_ch = "Protocol-Query"
+
     if args.csv:
         # CSV 批次模式
         try:
@@ -54,19 +64,20 @@ def run_cli():
             test_cases=cases,
             delay_ms=args.delay,
             error_policy=policy,
-            output_dir=args.output
+            output_dir=args.output,
+            forced_channel=forced_ch
         )
         runner = BatchRunner(config)
         
         def on_res(res):
             status = "PASS" if res.success else "FAIL"
-            print(f"[{status}] #{res.index} LID=0x{res.lid:02X} NUMD=0x{res.numd:02X} CDW10=0x{res.cdw10:08X} ({res.length_bytes}B) | Latency={res.latency_ms:.2f}ms")
+            print(f"[{status}] #{res.index} LID=0x{res.lid:02X} NUMD=0x{res.numd:02X} CDW10=0x{res.cdw10:08X} [{res.channel}] ({res.length_bytes}B) | Latency={res.latency_ms:.2f}ms")
             if not res.success and res.error_message:
                 print(f"  Error: {res.error_message}")
         
         runner.on_result = on_res
         
-        print(f"開始執行 CSV 批次測試，共 {len(cases)} 筆...")
+        print(f"開始執行 CSV 批次測試 (通道={args.channel})，共 {len(cases)} 筆...")
         runner.start()
         # CLI 模式需同步等待完成
         runner._thread.join()
@@ -75,6 +86,7 @@ def run_cli():
     elif args.lid and (args.numd or args.length):
         # 單次下發模式
         lid_val = int(args.lid, 16) if args.lid.startswith("0x") else int(args.lid)
+        opc_val = int(args.opcode, 16) if args.opcode.startswith("0x") else int(args.opcode)
         
         if args.numd:
             numd_val = int(args.numd, 16) if (args.numd.startswith("0x") or any(c in "abcdefABCDEF" for c in args.numd)) else int(args.numd)
@@ -88,7 +100,8 @@ def run_cli():
             lid=lid_val,
             numd=numd_val,
             length_bytes=length_val,
-            lid_name="ManualTest"
+            lid_name="ManualTest",
+            opcode=opc_val
         )
         
         config = BatchConfig(
@@ -96,7 +109,8 @@ def run_cli():
             test_cases=[case],
             delay_ms=0,
             error_policy=ErrorPolicy.CONTINUE,
-            output_dir=args.output
+            output_dir=args.output,
+            forced_channel=forced_ch
         )
         runner = BatchRunner(config)
         

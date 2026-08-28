@@ -106,7 +106,7 @@ class TestReporter(unittest.TestCase):
             reader = list(csv.reader(f))
             
             # Header
-            self.assertEqual(reader[0], ["Index", "LID", "LID_Name", "NUMD", "Length_Bytes", "CDW10", "Status_Code", "Latency_ms", "Result", "Error_Message"])
+            self.assertEqual(reader[0], ["Index", "LID", "LID_Name", "NUMD", "Length_Bytes", "CDW10", "Channel", "Status_Code", "Latency_ms", "Result", "Error_Message"])
             
             # Row 1 (PASS)
             self.assertEqual(reader[1][0], "1")
@@ -114,7 +114,7 @@ class TestReporter(unittest.TestCase):
             self.assertEqual(reader[1][3], "0x7F")
             self.assertEqual(reader[1][4], "512")
             self.assertEqual(reader[1][5], "0x007F0002")
-            self.assertEqual(reader[1][8], "PASS")
+            self.assertEqual(reader[1][9], "PASS")
             
             # Row 2 (FAIL)
             self.assertEqual(reader[2][0], "2")
@@ -122,8 +122,9 @@ class TestReporter(unittest.TestCase):
             self.assertEqual(reader[2][3], "0xFF")
             self.assertEqual(reader[2][4], "1024")
             self.assertEqual(reader[2][5], "0x00FF0001")
-            self.assertEqual(reader[2][6], "0x4005")
-            self.assertEqual(reader[2][8], "FAIL")
+            self.assertEqual(reader[2][7], "0x4005")
+            self.assertEqual(reader[2][9], "FAIL")
+            self.assertEqual(reader[2][10], "NVMe Error Status: 0x4005")
             
             # 統計行
             self.assertEqual(reader[4], ["Total", "2"])

@@ -45,8 +45,12 @@ class WinRing0Driver:
         self._start_and_open()
 
     def _locate_sys_file(self, custom_path: Optional[str]) -> str:
+        meipass = getattr(sys, "_MEIPASS", "")
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable)) if hasattr(sys, "executable") else ""
         candidates = [
             custom_path,
+            os.path.join(meipass, "WinRing0x64.sys") if meipass else None,
+            os.path.join(exe_dir, "WinRing0x64.sys") if exe_dir else None,
             os.path.join(os.getcwd(), "WinRing0x64.sys"),
             os.path.join(os.path.dirname(os.path.abspath(__file__)), "WinRing0x64.sys"),
             os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "WinRing0x64.sys"),

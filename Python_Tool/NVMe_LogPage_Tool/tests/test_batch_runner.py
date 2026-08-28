@@ -26,7 +26,7 @@ class TestBatchRunner(unittest.TestCase):
     def test_batch_runner_success_flow(self, mock_driver_cls):
         # 設定 Mock NvmeDriver
         mock_driver_instance = MagicMock()
-        mock_driver_instance.get_log_page.return_value = (b"\xAA" * 512, 0)
+        mock_driver_instance.get_log_page.return_value = (b"\xAA" * 512, 0, "Pass-Through")
         mock_driver_instance.__enter__.return_value = mock_driver_instance
         mock_driver_cls.return_value = mock_driver_instance
 

@@ -64,9 +64,10 @@ class TestNvmeDriver(unittest.TestCase):
         with NvmeDriver(1) as driver:
             # 請求 NUMD=0 (LID=0x02, 4 Bytes)
             cmd = GetLogPageCommand(lid=0x02, numd_val=0)
-            data, status = driver.get_log_page(cmd)
+            data, status, channel = driver.get_log_page(cmd)
 
         self.assertEqual(status, 0)
+        self.assertEqual(channel, "Pass-Through")
         self.assertEqual(data, b"\x12\x34\x56\x78")  # 4 Bytes
         
         # 驗證 SPC 結構中下發至設備的參數：
@@ -104,9 +105,10 @@ class TestNvmeDriver(unittest.TestCase):
 
         with NvmeDriver(1) as driver:
             cmd = GetLogPageCommand(lid=0x02, length_bytes=512)
-            data, status = driver.get_log_page(cmd)
+            data, status, channel = driver.get_log_page(cmd)
 
         self.assertEqual(status, 0)
+        self.assertEqual(channel, "Protocol-Query")
         self.assertEqual(data, b"\xAA" * 512)
 
     @patch("core.nvme_driver.device_io_control")
@@ -125,9 +127,10 @@ class TestNvmeDriver(unittest.TestCase):
 
         with NvmeDriver(1) as driver:
             cmd = GetLogPageCommand(lid=0x02, length_bytes=512)
-            data, status = driver.get_log_page(cmd)
+            data, status, channel = driver.get_log_page(cmd)
 
         self.assertEqual(status, 0)
+        self.assertEqual(channel, "Miniport-Pass-Through")
         self.assertEqual(data, b"\xBB" * 512)
 
     @patch("core.nvme_driver.device_io_control")
@@ -150,7 +153,7 @@ class TestNvmeDriver(unittest.TestCase):
         with NvmeDriver(1) as driver:
             for length in [1, 2, 3, 7, 13, 64, 100, 128, 256, 512, 700, 1024]:
                 cmd = GetLogPageCommand(lid=0x02, length_bytes=length)
-                data, status = driver.get_log_page(cmd)
+                data, status, channel = driver.get_log_page(cmd, forced_channel="Protocol-Query")
                 self.assertEqual(status, 0)
                 self.assertEqual(len(data), length)
                 expected = (bytes(range(256)) * 4)[:length]

@@ -16,7 +16,7 @@ def build():
         "--onefile",
         "--windowed",
         "--uac-admin",           # 請求管理員權限
-        "--name", "NVMe_LogPage_Tool_v17",  # 版本 v17 (含 Ring0 直通與 CDW10 全面支援)
+        "--name", "NVMe_LogPage_Tool_v18",  # 版本 v18 (含自定義 Opcode 繞過、通道透明化與 MMIO PyInstaller 修正)
         "--add-data", "test_cases;test_cases",
         "--add-data", "WinRing0x64.sys;.",
         main_script
@@ -25,9 +25,9 @@ def build():
     print(f"正在打包: {' '.join(cmd)}")
     subprocess.run(cmd, cwd=script_dir, check=True)
     
-    exe_name = "NVMe_LogPage_Tool_v17.exe"
+    exe_name = "NVMe_LogPage_Tool_v18.exe"
     exe_path = os.path.join(script_dir, "dist", exe_name)
-    zip_path = os.path.join(script_dir, "dist", "NVMe_LogPage_Tool_v17.zip")
+    zip_path = os.path.join(script_dir, "dist", "NVMe_LogPage_Tool_v18.zip")
     
     # 壓縮為 zip (包含 .exe, WinRing0x64.sys 與範例 test_cases)
     import zipfile

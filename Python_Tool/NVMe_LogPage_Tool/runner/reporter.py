@@ -80,7 +80,7 @@ class Reporter:
         
         with open(summary_path, "w", encoding="utf-8", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["Index", "LID", "LID_Name", "NUMD", "Length_Bytes", "CDW10", "Status_Code", "Latency_ms", "Result", "Error_Message"])
+            writer.writerow(["Index", "LID", "LID_Name", "NUMD", "Length_Bytes", "CDW10", "Channel", "Status_Code", "Latency_ms", "Result", "Error_Message"])
             
             for r in results:
                 writer.writerow([
@@ -90,6 +90,7 @@ class Reporter:
                     f"0x{r.numd:02X}",
                     r.length_bytes,
                     f"0x{r.cdw10:08X}",
+                    r.channel,
                     f"0x{r.status_code:X}" if r.status_code >= 0 else str(r.status_code),
                     f"{r.latency_ms:.2f}",
                     "PASS" if r.success else "FAIL",

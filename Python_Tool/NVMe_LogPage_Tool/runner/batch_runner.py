@@ -25,6 +25,7 @@ class SingleResult:
     numd: int               # NUMD (0-based)
     length_bytes: int
     cdw10: int = 0          # NVMe SQE CDW10 暫存器內容
+    channel: str = ""       # 實際執行通道 (如 Direct-MMIO-Ring0, Pass-Through, Protocol-Query)
     status_code: int = -1   # NVMe Status Code (0=成功)
     latency_ms: float = 0.0 # 執行耗時 (毫秒)
     success: bool = False   # True=PASS, False=FAIL
@@ -40,6 +41,7 @@ class BatchConfig:
     delay_ms: int = 0                          # 每筆之間的間隔 (毫秒)
     error_policy: ErrorPolicy = ErrorPolicy.CONTINUE
     output_dir: str = ""                       # 輸出目錄 (空則自動建立)
+    forced_channel: Optional[str] = None       # 強制指定通道 ('Direct-MMIO', 'Pass-Through', 'Protocol-Query' 等)
 
 
 class BatchRunner:
@@ -112,8 +114,9 @@ class BatchRunner:
                         error_msg = ""
                         success = False
                         
+                        channel = ""
                         try:
-                            data, status_code = driver.get_log_page(cmd)
+                            data, status_code, channel = driver.get_log_page(cmd, forced_channel=self._config.forced_channel)
                             success = (status_code == 0)
                             if not success:
                                 error_msg = f"NVMe Error Status: 0x{status_code:X}"
@@ -130,6 +133,7 @@ class BatchRunner:
                             numd=test_case.numd,
                             length_bytes=test_case.length_bytes,
                             cdw10=cmd.cdw10,
+                            channel=channel,
                             status_code=status_code,
                             latency_ms=latency_ms,
                             success=success,

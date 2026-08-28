@@ -51,15 +51,36 @@ class NvmeDriver:
             return raw_data[:cmd.length_bytes], 0
         raise OSError(f"Direct MMIO 指令回傳非零狀態碼: {status}")
 
-    def get_log_page(self, cmd: GetLogPageCommand) -> Tuple[bytes, int]:
+    def get_log_page(self, cmd: GetLogPageCommand, forced_channel: Optional[str] = None) -> Tuple[bytes, int, str]:
         """執行 Get Log Page 指令。
         
-        多重通道降級策略：
+        多重通道策略：
         1. Direct-MMIO-Ring0 (繞過微軟 stornvme.sys 審查，直接敲 Doorbell 下發 100% 原始 CDW10)
         2. Standard Pass-Through (IOCTL_STORAGE_PROTOCOL_COMMAND - 通用 Windows 10/11)
         3. Protocol-Query (IOCTL_STORAGE_QUERY_PROPERTY - 微軟原生存取)
         4. Intel/OEM Miniport Pass-Through (IOCTL_SCSI_MINIPORT - Intel RST/VMD/專用驅動)
+        
+        Args:
+            cmd: GetLogPageCommand
+            forced_channel: 指定強制下發通道 ('Direct-MMIO', 'Pass-Through', 'Protocol-Query', 'Miniport' 或 None/Auto)
+            
+        Returns:
+            Tuple of (data_bytes, status_code, channel_name)
         """
+        all_methods = {
+            "Direct-MMIO": ("Direct-MMIO-Ring0", self._get_log_page_direct_mmio),
+            "Pass-Through": ("Pass-Through", self._get_log_page_passthrough),
+            "Protocol-Query": ("Protocol-Query", self._get_log_page_query_property),
+            "Miniport": ("Miniport-Pass-Through", self._get_log_page_intel_miniport),
+        }
+
+        # 若使用者指定特定通道，則不進行自動降級，直接執行並拋出該通道之完整錯誤
+        if forced_channel and forced_channel in all_methods:
+            name, method = all_methods[forced_channel]
+            data, status = method(cmd)
+            return data, status, name
+
+        # 自動模式 (Auto)：依序降級
         methods = [
             ("Direct-MMIO-Ring0", self._get_log_page_direct_mmio),
             ("Pass-Through", self._get_log_page_passthrough),
@@ -70,13 +91,14 @@ class NvmeDriver:
         errors = []
         for name, method in methods:
             try:
-                return method(cmd)
+                data, status = method(cmd)
+                return data, status, name
             except Exception as e:
                 errors.append(f"{name} 錯誤: {e}")
 
         # 所有通道皆失敗
         err_msg = "\n".join(errors)
-        raise OSError(f"Get Log Page (LID=0x{cmd.lid:02X}) 執行失敗。\n{err_msg}")
+        raise OSError(f"Get Log Page (Opcode=0x{cmd.opcode:02X}, LID=0x{cmd.lid:02X}) 執行失敗。\n{err_msg}")
 
     def _get_log_page_passthrough(self, cmd: GetLogPageCommand) -> Tuple[bytes, int]:
         """透過 IOCTL_STORAGE_PROTOCOL_COMMAND 執行 NVMe SQE 下發。"""
@@ -144,7 +166,7 @@ class NvmeDriver:
             struct.pack_into("<I", buf, 56, 1)                          # CommandSpecific = 1 (Admin)
 
             # 填寫 NVMe SQE (offset 80..143)
-            struct.pack_into("<B", buf, 80, OPCODE_GET_LOG_PAGE)        # Opcode 0x02
+            struct.pack_into("<B", buf, 80, cmd.opcode)                 # Opcode (支援自定義 0xC0 等)
             struct.pack_into("<I", buf, 84, strat["nsid"])              # NSID
             struct.pack_into("<I", buf, 120, strat["cdw10"])            # CDW10 (精確 NUMDL)
             struct.pack_into("<I", buf, 124, cmd.cdw11)                 # CDW11
