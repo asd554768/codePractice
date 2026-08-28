@@ -1,4 +1,4 @@
-﻿# Windows NVMe 底層通訊、IOCTL、Ring0 MMIO 與驅動實戰經驗全紀錄
+﻿# Windows NVMe 底層通訊、IOCTL、Ring0 MMIO 與驅動實戰經驗全紀錄 (v19)
 
 本文件完整記錄在 Windows 平臺開發 NVMe Get Log Page 工具、對接微軟 `stornvme.sys`、第三方 Miniport 驅動以及基於 `WinRing0` 的 Direct-MMIO 核心直通引擎時所累積的底層除錯經驗、通訊架構與 49 項單元測試設計規範。
 
@@ -14,13 +14,13 @@
 +---------------------------------------------------------------------------------------------------+
        |                               |                              |                             |
        v                               v                              v                             v
-[通道 1: Direct-MMIO]         [通道 2: Pass-Through]       [通道 3: Miniport Pass-Through]  [通道 4: Protocol-Query]
-WinRing0x64.sys (Ring0)       IOCTL_STORAGE_PROTOCOL_CMD   IOCTL_SCSI_MINIPORT              IOCTL_STORAGE_QUERY_PROP
-(物理記憶體/Doorbell直敲)     (0x002DD3C0)                 (0x0004D008)                     (0x002D1400)
+[通道 1: Direct-MMIO]         [通道 2: Pass-Through]       [通道 3: Protocol-Query]         [通道 4: Miniport Pass-Through]
+WinRing0x64.sys (Ring0)       IOCTL_STORAGE_PROTOCOL_CMD   IOCTL_STORAGE_QUERY_PROP         IOCTL_SCSI_MINIPORT
+(物理記憶體/Doorbell直敲)     (0x002DD3C0)                 (0x002D1400)                     (0x0004D008)
        |                               |                              |                             |
        v                               v                              v                             v
-  PCIe MMIO Doorbell              stornvme.sys                Intel RST / VMD / OEM             stornvme.sys
-(100% 繞過微軟核心改寫)        (微軟標準 NVMe SQE 直通)      (IaNVMe / SecNvme 私有介面)      (微軟核心寫死 512B/0x7F)
+  PCIe MMIO Doorbell              stornvme.sys                    stornvme.sys                Intel RST / VMD / OEM
+(100% 繞過微軟核心改寫)        (微軟標準 NVMe SQE 直通)      (精確 ProtocolDataLength 映射)   (IaNVMe / SecNvme 私有介面)
 ```
 
 ---
@@ -29,24 +29,26 @@ WinRing0x64.sys (Ring0)       IOCTL_STORAGE_PROTOCOL_CMD   IOCTL_SCSI_MINIPORT  
 
 | Windows Error Code | 錯誤常數 | 常見原因 (Root Cause) | 解決方案與程式碼對策 |
 | :--- | :--- | :--- | :--- |
-| **87** | `ERROR_INVALID_PARAMETER` | 1. **`ProtocolType` 誤設為 1 (SCSI)**：Windows SDK `STORAGE_PROTOCOL_TYPE` 定義 `ProtocolTypeNvme = 3`（1 為 SCSI、2 為 ATA）。<br>2. `STORAGE_PROTOCOL_COMMAND` 記憶體排版缺少 64B `ErrorInfo` 空間。<br>3. `DataFromDeviceBufferOffset` 偏移量不正確。<br>4. **WinRing0 `ReadPhysicalMemory` 存取了無效的實體記憶體位址**（WMI 誤抓到非 NVMe 晶片組橋接位址，導致核心 `MmMapIoSpace` 失敗）。 | 1. **修正 `PROTOCOL_TYPE_NVME = 3`**。<br>2. 保留 `[144..207]` 64 Bytes 錯誤日誌緩衝區。<br>3. 資料區偏移設定為 `208`。<br>4. 精確過濾 PCI NVMe 類別碼 `CC_010802`，並透過動態讀取 NVMe Version 暫存器（offset 0x08）探測有效 BAR0。 |
+| **87** | `ERROR_INVALID_PARAMETER` | 1. **`ProtocolType` 誤設為 1 (SCSI)**：Windows SDK `STORAGE_PROTOCOL_TYPE` 定義 `ProtocolTypeNvme = 3`（1 為 SCSI、2 為 ATA）。<br>2. `STORAGE_PROTOCOL_COMMAND` 記憶體排版缺少 64B `ErrorInfo` 空間。<br>3. `DataFromDeviceBufferOffset` 偏移量不正確。<br>4. **WinRing0 `ReadPhysicalMemory` 存取了受保護的實體記憶體位址**（Windows 10/11 核心安全防禦隔離機制禁止任意實體記憶體映射）。 | 1. **修正 `PROTOCOL_TYPE_NVME = 3`**。<br>2. 保留 `[144..207]` 64 Bytes 錯誤日誌緩衝區。<br>3. 資料區偏移設定為 `208`。<br>4. 透過 PCI Config Space 直接掃描 NVMe BAR0，並具備優雅降級。 |
+| **317** | `ERROR_MR_MID_NOT_FOUND` | **微軟 Storport DMA 限制**：`IOCTL_STORAGE_PROTOCOL_COMMAND` 下發給 `\\.\PhysicalDriveN` 時，若 `DataFromDeviceTransferLength < 512`（例如設為 4B），微軟核心 Storport PRP/DMA 檢查未通過，拋出未映射的 NTSTATUS (Win32 Error 317)。 | 1. DMA 接收緩衝區維持 512B 對齊。<br>2. **使用精確的 Protocol-Query 通道下發自定義長度**。 |
 | **6** | `ERROR_INVALID_HANDLE` | **64 位元 ctypes 指標截斷陷阱**：`OpenSCManagerW` 或 `CreateFileW` 回傳 64-bit 指標，但 Python `ctypes` 預設回傳型態為 `c_int` (32-bit)，導致指標高位元被截斷，傳遞給 `CreateServiceW` 被系統判定為無效 Handle。 | 1. 顯式設定所有 Win32 SCM API 的 `argtypes` 與 `restype = wintypes.HANDLE`。<br>2. 優先採用 Windows 原生 `sc.exe create` 與 `sc.exe start` 進行服務註冊，完全免除 ctypes 指標型態異常。 |
 | **1275** | `ERROR_DRIVER_BLOCKED` | `WinRing0x64.sys` 驅動被 Windows 11/10 的「記憶體完整性 (HVCI)」或「易受攻擊驅動程式封鎖清單」封鎖。 | 捕捉錯誤碼並引導使用者於 Windows 安全性中心關閉驅動封鎖或使用自定義私有 Opcode 繞過。 |
-| **1117** | `ERROR_IO_DEVICE` | 1. **`ProtocolType` 誤設為 1 (SCSI)**：NVMe 驅動發現請求 Protocol 非 NVMe 直接拒絕。<br>2. `IOCTL_STORAGE_QUERY_PROPERTY` 輸入緩衝區大小非 48 Bytes。<br>3. 請求資料長度超過該 Log Page 的硬體最大長度。 | 1. **修正 `PROTOCOL_TYPE_NVME = 3`**。<br>2. `cbInBuffer` 嚴格限制為 **48 Bytes**。<br>3. `ProtocolDataLength` 精確設定為 512 Bytes。 |
+| **1117** | `ERROR_IO_DEVICE` | 1. **`ProtocolType` 誤設為 1 (SCSI)**：NVMe 驅動發現請求 Protocol 非 NVMe 直接拒絕。<br>2. `IOCTL_STORAGE_QUERY_PROPERTY` 輸入緩衝區大小非 48 Bytes。<br>3. 請求資料長度超過該 Log Page 的硬體最大長度。 | 1. **修正 `PROTOCOL_TYPE_NVME = 3`**。<br>2. `cbInBuffer` 嚴格限制為 **48 Bytes**。<br>3. `ProtocolDataLength` 精確設定為對應傳輸長度。 |
 | **5** | `ERROR_ACCESS_DENIED` | 開啟 `\\.\PhysicalDriveN` 或存取 SCM 時未具備系統管理員權限。 | 1. 執行檔 manifest 加入 `requireAdministrator` (`--uac-admin`)。<br>2. 透過 `ShellExecuteW` 動詞 `"runas"` 自動觸發 UAC 提權。 |
 | **1** | `ERROR_INVALID_FUNCTION` | `IOCTL_SCSI_MINIPORT` 僅支援發送給 Adapter 控制器 Handle，發給 `\\.\PhysicalDriveN` 被拒絕。 | 自動探測開啟 `\\.\Scsi0:` ~ `\\.\Scsi3:` 介面作為備用通道發送。 |
 
 ---
 
-## 三、微軟核心偽裝與 0x7F (512B) 強制介入機理
+## 三、微軟 Protocol-Query 精確長度映射機理 (重大突破)
 
-### 1. `IOCTL_STORAGE_QUERY_PROPERTY` 核心行爲
-- 微軟核心驅動（`stornvme.sys`）在處理 `IOCTL_STORAGE_QUERY_PROPERTY` 查詢日誌時，**強制以 512 Bytes（128 Dwords）封裝 NVMe SQE，並將 `CDW10` 的 `NUMDL` 寫死為 `0x7F`**。
-- 若應用層要求 4 Bytes（`NUMD = 0x00`），該 IOCTL 回傳 512 Bytes 後應用層即使裁切為 4 Bytes，**設備實體端依然會收到 0x7F**。
-
-### 2. 防偽機制設計
-- 當使用者請求 `NUMD != 0x7F` 時，**嚴格禁止在自動模式下降級至 `Protocol-Query`**。
-- 若 MMIO 與 Pass-Through 皆失敗，直接拋出真實底層錯誤，絕不以偽裝的 512B 當作成功。
+### 1. `ProtocolDataLength` 與 CDW10.NUMD 的核心計算公式
+- 微軟 `stornvme.sys` 處理 `IOCTL_STORAGE_QUERY_PROPERTY`（`StorageDeviceProtocolSpecificProperty`）時，核心組裝 NVMe SQE 的規則如下：
+  $$\text{NUMDL} = \left(\frac{\text{ProtocolDataLength}}{4}\right) - 1$$
+- **先前誤區**：若在結構中寫死 `ProtocolDataLength = 512`，微軟核心就會在 SQE CDW10 中填入 $(512 / 4) - 1 = 127 = \text{0x7F}$！
+- **正確做法**：
+  - 當使用者請求 $1\text{ Dword} = 4\text{ Bytes}$（`NUMD = 0x00`）時，將 `ProtocolDataLength` 精確設為 **`4`**。
+  - 微軟核心自動計算：$\text{NUMDL} = (4 / 4) - 1 = \mathbf{0x00}$！
+  - 核心組裝出的 NVMe SQE CDW10 即為完美的 **`0x000000F0`**，設備端 100% 收到真實的 `NUMD = 0x00`！
 
 ---
 
@@ -60,13 +62,12 @@ WinRing0x64.sys (Ring0)       IOCTL_STORAGE_PROTOCOL_CMD   IOCTL_SCSI_MINIPORT  
 
 ---
 
-## 五、Direct-MMIO (Ring0) 門鈴直通技術
+## 五、Direct-MMIO (Ring0) 與 PCI Configuration 掃描技術
 
-1. **架構**：透過 `WinRing0x64.sys` 讀寫實體記憶體與 PCIe BAR0 暫存器。
-2. **NVMe 控制器 BAR0 定位**：
-   - 透過 WMI 搜尋 `CC_010802` (PCI NVMe Class) 裝置。
-   - 動態讀取 NVMe Version（`VS`，offset 0x08）與 Capability（`CAP`，offset 0x00）暫存器，確保位址有效。
-3. **Doorbell 門鈴計算**：
+1. **PCI Configuration Space 直掃**：
+   - 透過 `WinRing0` 直接在 PCIe 匯流排（Bus 0~255, Dev 0~31, Func 0~7）搜尋 NVMe 標準類別碼 `0x010802`。
+   - 直接從 PCI 暫存器 Offset `0x10`（BAR0 Low）與 `0x14`（BAR0 High）讀取 100% 精準的 NVMe 實體 BAR0。
+2. **Doorbell 門鈴計算**：
    - `Admin SQ0 Tail Doorbell Offset = 0x1000 + (2 * 0 * (4 << CAP.DSTRD))`。
    - 將 64-byte SQE 寫入實體 Host Memory 後，寫入 Doorbell 暫存器觸發硬體執行。
 

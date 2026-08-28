@@ -1,4 +1,4 @@
-﻿# Docker
+# Docker
 docker_env/
 *docker-compose*
 *Dockerfile*
@@ -10,6 +10,5 @@ __pycache__/
 
 # Build & Test output
 results/
-dist/
 build/
 *.spec

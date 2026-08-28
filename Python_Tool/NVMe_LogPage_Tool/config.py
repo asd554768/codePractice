@@ -122,4 +122,4 @@ SMART_FIELDS: list[Tuple[int, int, str, str]] = [
 
 # === 應用程式版本 ===
 APP_NAME = "NVMe Get Log Page Batch Tool"
-APP_VERSION = "1.0.0"
+APP_VERSION = "19.0.0"

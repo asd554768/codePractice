@@ -10,6 +10,6 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 results/
-dist/
 build/
 *.spec
+
