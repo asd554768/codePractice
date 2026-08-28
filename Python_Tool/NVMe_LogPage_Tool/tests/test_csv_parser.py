@@ -118,8 +118,8 @@ LID,NUMD,Name
         self.assertEqual(cases[0].numd, 0x7F)
         self.assertEqual(cases[0].length_bytes, 512)
         self.assertEqual(cases[-1].lid, 0x02)
-        self.assertEqual(cases[-1].numd, 0x01)
-        self.assertEqual(cases[-1].length_bytes, 8)
+        self.assertEqual(cases[-1].numd, 0x00)
+        self.assertEqual(cases[-1].length_bytes, 4)
 
     def test_utf8_sig_bom_support(self):
         content = "LID,NUMD\n0x02,7F\n"

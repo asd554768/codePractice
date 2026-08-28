@@ -80,13 +80,20 @@ class NvmeDriver:
             data, status = method(cmd)
             return data, status, name
 
-        # 自動模式 (Auto)：依序降級
-        methods = [
-            ("Direct-MMIO-Ring0", self._get_log_page_direct_mmio),
-            ("Pass-Through", self._get_log_page_passthrough),
-            ("Protocol-Query", self._get_log_page_query_property),
-            ("Miniport-Pass-Through", self._get_log_page_intel_miniport),
-        ]
+        # 自動模式 (Auto)：
+        # 若使用者指定了非 512B (NUMD != 0x7F) 之精確值，不使用微軟硬性綁定 512B 的 Protocol-Query 通道
+        if cmd.numd != 0x7F:
+            methods = [
+                ("Direct-MMIO-Ring0", self._get_log_page_direct_mmio),
+                ("Pass-Through", self._get_log_page_passthrough),
+            ]
+        else:
+            methods = [
+                ("Direct-MMIO-Ring0", self._get_log_page_direct_mmio),
+                ("Pass-Through", self._get_log_page_passthrough),
+                ("Protocol-Query", self._get_log_page_query_property),
+                ("Miniport-Pass-Through", self._get_log_page_intel_miniport),
+            ]
 
         errors = []
         for name, method in methods:
@@ -98,7 +105,7 @@ class NvmeDriver:
 
         # 所有通道皆失敗
         err_msg = "\n".join(errors)
-        raise OSError(f"Get Log Page (Opcode=0x{cmd.opcode:02X}, LID=0x{cmd.lid:02X}) 執行失敗。\n{err_msg}")
+        raise OSError(f"Get Log Page (Opcode=0x{cmd.opcode:02X}, LID=0x{cmd.lid:02X}, NUMD=0x{cmd.numd:02X}) 執行失敗。\n{err_msg}")
 
     def _get_log_page_passthrough(self, cmd: GetLogPageCommand) -> Tuple[bytes, int]:
         """透過 IOCTL_STORAGE_PROTOCOL_COMMAND 執行 NVMe SQE 下發。"""

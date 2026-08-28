@@ -108,7 +108,19 @@ class WinRing0Driver:
                     raise OSError(f"建立驅動服務失敗 (LastError={err})")
 
             # 啟動服務
-            advapi32.StartServiceW(schService, 0, None)
+            start_ok = advapi32.StartServiceW(schService, 0, None)
+            if not start_ok:
+                start_err = ctypes.GetLastError()
+                # 1056 = ERROR_SERVICE_ALREADY_RUNNING
+                if start_err != 1056:
+                    advapi32.CloseServiceHandle(schService)
+                    if start_err == 1275:
+                        raise OSError("WinRing0x64.sys 驅動被系統封鎖 (Error 1275: ERROR_DRIVER_BLOCKED)。請檢查 Windows 易受攻擊驅動程式封鎖清單。")
+                    elif start_err == 577:
+                        raise OSError("WinRing0x64.sys 數位簽章未通過 Windows 驗證 (Error 577)。")
+                    else:
+                        raise OSError(f"啟動 WinRing0 驅動服務失敗 (LastError={start_err})")
+
             advapi32.CloseServiceHandle(schService)
             self._installed = True
         finally:
@@ -125,7 +137,8 @@ class WinRing0Driver:
             None
         )
         if self.device_handle == INVALID_HANDLE_VALUE:
-            raise OSError(f"無法開啟驅動裝置 {DEVICE_NAME} (LastError={ctypes.GetLastError()})")
+            err = ctypes.GetLastError()
+            raise OSError(f"無法開啟 WinRing0 驅動裝置 \\\\.\\WinRing0_1_2_0 (LastError={err})")
 
     def read_physical_memory(self, phys_addr: int, size_bytes: int, unit_size: int = 1) -> bytes:
         """讀取實體記憶體。

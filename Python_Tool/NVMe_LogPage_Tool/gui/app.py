@@ -57,11 +57,11 @@ class NvmeLogPageApp:
         ttk.Combobox(params_frame, textvariable=self.error_policy_var, values=[e.value for e in ErrorPolicy], state="readonly", width=12).pack(side=tk.LEFT, padx=5)
 
         ttk.Label(params_frame, text="通道路徑:").pack(side=tk.LEFT, padx=5)
-        self.channel_var = tk.StringVar(value="自動 (Auto)")
+        self.channel_var = tk.StringVar(value="強制 Direct-MMIO (Ring0)")
         self.channel_combo = ttk.Combobox(
             params_frame,
             textvariable=self.channel_var,
-            values=["自動 (Auto)", "強制 Direct-MMIO (Ring0)", "微軟 Pass-Through", "微軟 Protocol-Query"],
+            values=["強制 Direct-MMIO (Ring0)", "自動 (Auto)", "微軟 Pass-Through", "微軟 Protocol-Query"],
             state="readonly",
             width=22
         )

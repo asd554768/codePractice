@@ -1,14 +1,14 @@
-Python_Tool/unlock_PDF/config.json
-
-# Docker
+﻿# Docker
 docker_env/
 *docker-compose*
 *Dockerfile*
 
-# Python & Build
+# Python & Cache
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# Build & Test output
 results/
 dist/
 build/
