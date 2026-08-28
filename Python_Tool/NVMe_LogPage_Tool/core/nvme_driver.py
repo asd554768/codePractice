@@ -58,32 +58,36 @@ class NvmeDriver:
 
     def _get_log_page_passthrough(self, cmd: GetLogPageCommand) -> Tuple[bytes, int]:
         """透過 IOCTL_STORAGE_PROTOCOL_COMMAND 執行 NVMe SQE 下發。"""
-        # 計算 CDW10:
-        # 1. 精確 CDW10: 依據使用者請求的長度計算 NUMD (例如 64B -> NUMD=15, 1B/4B -> NUMD=0)
-        # 2. 對齊 CDW10: 依據 512B 傳輸長度計算 NUMD (NUMD=127)
-        transfer_len = max(cmd.aligned_length, 512)
+        # 精確傳輸長度與記憶體配置長度：
+        # exact_transfer_len: 精確依照使用者指定的 NUMD 計算 (4 Bytes ~ 4096 Bytes)
+        # alloc_len: 緩衝區大小至少 512B，確保 Windows DMA 核心記憶體足夠
+        exact_transfer_len = cmd.aligned_length
+        alloc_len = max(exact_transfer_len, 512)
+        
         cdw10_exact = cmd.cdw10
-        numd_aligned = (transfer_len // 4) - 1
+        numd_aligned = (alloc_len // 4) - 1
         cdw10_aligned = (numd_aligned << 16) | ((cmd.rae & 1) << 15) | ((cmd.lsp & 0xF) << 8) | (cmd.lid & 0xFF)
 
-        # 多重佈局與參數策略，全面適配 1~1024 Bytes 特殊日誌與不同 Windows 驅動：
+        # 多重佈局與參數策略：
+        # 優先使用 exact_transfer_len 與 cdw10_exact，確保 DataFromDeviceTransferLength 與 CDW10 NUMDL 完全一致！
         strategies = [
-            # 策略 1: 微軟標準規範 (Length 84, Flags Adapter, ErrorInfo 64 @ 144, Data @ 208, 精確 CDW10)
-            {"layout": "with_err", "length": 84, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact},
-            # 策略 2: 對齊 CDW10 (相容特定嚴格要求 512B 對齊的韌體)
-            {"layout": "with_err", "length": 84, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_aligned},
-            # 策略 3: Length 80, Flags Adapter
-            {"layout": "with_err", "length": 80, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact},
-            # 策略 4: Length 144, Flags Adapter
-            {"layout": "with_err", "length": 144, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact},
-            # 策略 5: Flags 0 (Device Request)
-            {"layout": "with_err", "length": 84, "flags": 0x00000000, "nsid": cmd.nsid, "cdw10": cdw10_exact},
-            {"layout": "with_err", "length": 84, "flags": 0x00000000, "nsid": 0, "cdw10": cdw10_exact},
-            # 策略 6: 直接佈局 (無 ErrorInfo, Data @ 144)
-            {"layout": "no_err", "length": 84, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact},
-            {"layout": "no_err", "length": 80, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact},
-            {"layout": "no_err", "length": 144, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact},
-            {"layout": "no_err", "length": 84, "flags": 0x00000000, "nsid": cmd.nsid, "cdw10": cdw10_exact},
+            # 策略 1: 微軟標準規範 (Length 84, Flags Adapter, ErrorInfo 64 @ 144, Data @ 208, 精確傳輸長度與 CDW10)
+            {"layout": "with_err", "length": 84, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": exact_transfer_len},
+            # 策略 2: Length 80, Flags Adapter (精確傳輸長度)
+            {"layout": "with_err", "length": 80, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": exact_transfer_len},
+            # 策略 3: Length 144, Flags Adapter (精確傳輸長度)
+            {"layout": "with_err", "length": 144, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": exact_transfer_len},
+            # 策略 4: Flags 0 (Device Request, 精確傳輸長度)
+            {"layout": "with_err", "length": 84, "flags": 0x00000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": exact_transfer_len},
+            {"layout": "with_err", "length": 84, "flags": 0x00000000, "nsid": 0, "cdw10": cdw10_exact, "transfer_len": exact_transfer_len},
+            # 策略 5: 直接佈局 (無 ErrorInfo, Data @ 144, 精確傳輸長度)
+            {"layout": "no_err", "length": 84, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": exact_transfer_len},
+            {"layout": "no_err", "length": 80, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": exact_transfer_len},
+            {"layout": "no_err", "length": 144, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": exact_transfer_len},
+            {"layout": "no_err", "length": 84, "flags": 0x00000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": exact_transfer_len},
+            # 策略 6 (相容降級): 512B 對齊長度 (僅當控制器或驅動拒絕小於 512B 傳輸時)
+            {"layout": "with_err", "length": 84, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_aligned, "transfer_len": alloc_len},
+            {"layout": "no_err", "length": 84, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_aligned, "transfer_len": alloc_len},
         ]
         
         last_error_code = None
@@ -97,7 +101,7 @@ class NvmeDriver:
                 error_info_offset = 0
                 data_buffer_offset = 144
                 
-            total_size = data_buffer_offset + transfer_len
+            total_size = data_buffer_offset + alloc_len
             buf = ctypes.create_string_buffer(total_size)
             
             # 填寫 STORAGE_PROTOCOL_COMMAND (offset 0..79)
@@ -110,7 +114,7 @@ class NvmeDriver:
             struct.pack_into("<I", buf, 24, 64)                         # CommandLength = 64
             struct.pack_into("<I", buf, 28, error_info_len)             # ErrorInfoLength
             struct.pack_into("<I", buf, 32, 0)                          # DataToDeviceTransferLength = 0
-            struct.pack_into("<I", buf, 36, transfer_len)               # DataFromDeviceTransferLength
+            struct.pack_into("<I", buf, 36, strat["transfer_len"])      # DataFromDeviceTransferLength (精確長度)
             struct.pack_into("<I", buf, 40, 10)                         # TimeOutValue = 10
             struct.pack_into("<I", buf, 44, error_info_offset)          # ErrorInfoOffset
             struct.pack_into("<I", buf, 48, 0)                          # DataToDeviceBufferOffset = 0
@@ -120,7 +124,7 @@ class NvmeDriver:
             # 填寫 NVMe SQE (offset 80..143)
             struct.pack_into("<B", buf, 80, OPCODE_GET_LOG_PAGE)        # Opcode 0x02
             struct.pack_into("<I", buf, 84, strat["nsid"])              # NSID
-            struct.pack_into("<I", buf, 120, strat["cdw10"])            # CDW10
+            struct.pack_into("<I", buf, 120, strat["cdw10"])            # CDW10 (精確 NUMDL)
             struct.pack_into("<I", buf, 124, cmd.cdw11)                 # CDW11
             struct.pack_into("<I", buf, 128, cmd.cdw12)                 # CDW12
             struct.pack_into("<I", buf, 132, cmd.cdw13)                 # CDW13

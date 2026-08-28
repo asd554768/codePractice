@@ -62,12 +62,21 @@ class TestNvmeDriver(unittest.TestCase):
         mock_ioctl.side_effect = fake_ioctl
 
         with NvmeDriver(1) as driver:
-            # 請求 1 Byte (Vendor LID >= 0xC0 優先走 Pass-Through)
-            cmd = GetLogPageCommand(lid=0xC0, length_bytes=1)
+            # 請求 NUMD=0 (LID=0x02, 4 Bytes)
+            cmd = GetLogPageCommand(lid=0x02, numd_val=0)
             data, status = driver.get_log_page(cmd)
 
         self.assertEqual(status, 0)
-        self.assertEqual(data, b"\x12")  # 精準裁切為 1 Byte
+        self.assertEqual(data, b"\x12\x34\x56\x78")  # 4 Bytes
+        
+        # 驗證 SPC 結構中下發至設備的參數：
+        # Offset 36: DataFromDeviceTransferLength 必須為精確的 4 (而不是 512)
+        transfer_len_sent = struct.unpack_from("<I", captured_io_buffer.raw, 36)[0]
+        self.assertEqual(transfer_len_sent, 4, f"DataFromDeviceTransferLength 應為 4，實際為 {transfer_len_sent}")
+        
+        # Offset 120: NVMe SQE CDW10 必須包含 NUMDL=0x00 (0x00000002)，絕不能被改成 0x007F0002
+        cdw10_sent = struct.unpack_from("<I", captured_io_buffer.raw, 120)[0]
+        self.assertEqual(cdw10_sent, 0x00000002, f"CDW10 應為 0x00000002，實際為 0x{cdw10_sent:08X}")
 
     @patch("core.nvme_driver.device_io_control")
     @patch("core.nvme_driver.open_device")
