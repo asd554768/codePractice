@@ -102,10 +102,10 @@ class WinRing0Driver:
 
     def _start_and_open(self):
         self._setup_api_prototypes()
-        advapi32 = ctypes.windll.advapi32
         kernel32 = ctypes.windll.kernel32
+        advapi32 = ctypes.windll.advapi32
 
-        # 1. 嘗試直接開啟既有裝置
+        # 1. 嘗試直接開啟既有裝置 Handle
         self.device_handle = kernel32.CreateFileW(
             DEVICE_NAME,
             GENERIC_READ | GENERIC_WRITE,
@@ -118,57 +118,84 @@ class WinRing0Driver:
         if self.device_handle and self.device_handle not in (INVALID_HANDLE_VALUE, 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFF):
             return
 
-        # 2. 若未載入，透過 Service Control Manager 註冊並啟動服務
         if not os.path.exists(self.sys_path):
             raise FileNotFoundError(f"找不到 WinRing0x64.sys 驅動檔案: {self.sys_path}")
 
-        schSCManager = advapi32.OpenSCManagerW(None, None, SC_MANAGER_ALL_ACCESS)
-        if not schSCManager:
-            raise PermissionError(f"無法開啟 Service Control Manager (LastError={ctypes.GetLastError()})，請以管理員身分執行")
-
+        # 2. 優先使用 Windows 原生 sc.exe 建立與啟動服務 (最穩定、免除 64-bit ctypes 指標轉換異常)
+        CREATE_NO_WINDOW = 0x08000000
+        sc_success = False
         try:
-            schService = advapi32.CreateServiceW(
-                schSCManager,
-                DRIVER_ID,
-                DRIVER_ID,
-                SERVICE_ALL_ACCESS,
-                SERVICE_KERNEL_DRIVER,
-                SERVICE_DEMAND_START,
-                SERVICE_ERROR_NORMAL,
-                self.sys_path,
-                None,
-                None,
-                None,
-                None,
-                None
-            )
-            if not schService:
-                err = ctypes.GetLastError()
-                if err == 1073:  # ERROR_SERVICE_EXISTS
-                    schService = advapi32.OpenServiceW(schSCManager, DRIVER_ID, SERVICE_ALL_ACCESS)
-                else:
-                    raise OSError(f"建立驅動服務失敗 (LastError={err})")
-
+            # 檢查服務是否存在
+            q_res = subprocess.run(["sc.exe", "query", DRIVER_ID], capture_output=True, text=True, creationflags=CREATE_NO_WINDOW)
+            if q_res.returncode == 1060: # 服務不存在，建立服務
+                c_res = subprocess.run(
+                    ["sc.exe", "create", DRIVER_ID, "type=", "kernel", f"binPath= {self.sys_path}"],
+                    capture_output=True,
+                    text=True,
+                    creationflags=CREATE_NO_WINDOW
+                )
+                self._installed = True
+            
             # 啟動服務
-            start_ok = advapi32.StartServiceW(schService, 0, None)
-            if not start_ok:
-                start_err = ctypes.GetLastError()
-                # 1056 = ERROR_SERVICE_ALREADY_RUNNING
-                if start_err != 1056:
-                    advapi32.CloseServiceHandle(schService)
-                    if start_err == 1275:
-                        raise OSError("WinRing0x64.sys 驅動被系統封鎖 (Error 1275: ERROR_DRIVER_BLOCKED)。請檢查 Windows 易受攻擊驅動程式封鎖清單。")
-                    elif start_err == 577:
-                        raise OSError("WinRing0x64.sys 數位簽章未通過 Windows 驗證 (Error 577)。")
+            s_res = subprocess.run(["sc.exe", "start", DRIVER_ID], capture_output=True, text=True, creationflags=CREATE_NO_WINDOW)
+            if "1275" in s_res.stdout or "1275" in s_res.stderr:
+                raise OSError("WinRing0x64.sys 驅動被系統封鎖 (Error 1275: ERROR_DRIVER_BLOCKED)。請至 Windows 安全性中心檢查「記憶體完整性」或「微軟易受攻擊驅動程式封鎖清單」。")
+            elif "577" in s_res.stdout or "577" in s_res.stderr:
+                raise OSError("WinRing0x64.sys 數位簽章未通過 Windows 驗證 (Error 577)。")
+            elif s_res.returncode in (0, 1056) or "RUNNING" in s_res.stdout:
+                sc_success = True
+        except OSError:
+            raise
+        except Exception:
+            sc_success = False
+
+        # 3. 若 sc.exe 失敗，回退至原生 Win32 SCM API
+        if not sc_success:
+            schSCManager = advapi32.OpenSCManagerW(None, None, SC_MANAGER_ALL_ACCESS)
+            if not schSCManager:
+                raise PermissionError(f"無法開啟 Service Control Manager (LastError={ctypes.GetLastError()})，請以管理員身分執行")
+
+            try:
+                schService = advapi32.CreateServiceW(
+                    schSCManager,
+                    DRIVER_ID,
+                    DRIVER_ID,
+                    SERVICE_ALL_ACCESS,
+                    SERVICE_KERNEL_DRIVER,
+                    SERVICE_DEMAND_START,
+                    SERVICE_ERROR_NORMAL,
+                    self.sys_path,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None
+                )
+                if not schService:
+                    err = ctypes.GetLastError()
+                    if err == 1073:  # ERROR_SERVICE_EXISTS
+                        schService = advapi32.OpenServiceW(schSCManager, DRIVER_ID, SERVICE_ALL_ACCESS)
                     else:
-                        raise OSError(f"啟動 WinRing0 驅動服務失敗 (LastError={start_err})")
+                        raise OSError(f"建立驅動服務失敗 (LastError={err})")
 
-            advapi32.CloseServiceHandle(schService)
-            self._installed = True
-        finally:
-            advapi32.CloseServiceHandle(schSCManager)
+                start_ok = advapi32.StartServiceW(schService, 0, None)
+                if not start_ok:
+                    start_err = ctypes.GetLastError()
+                    if start_err != 1056:
+                        advapi32.CloseServiceHandle(schService)
+                        if start_err == 1275:
+                            raise OSError("WinRing0x64.sys 驅動被系統封鎖 (Error 1275: ERROR_DRIVER_BLOCKED)。請至 Windows 安全性中心檢查「記憶體完整性」或「微軟易受攻擊驅動程式封鎖清單」。")
+                        elif start_err == 577:
+                            raise OSError("WinRing0x64.sys 數位簽章未通過 Windows 驗證 (Error 577)。")
+                        else:
+                            raise OSError(f"啟動 WinRing0 驅動服務失敗 (LastError={start_err})")
 
-        # 3. 重新開啟裝置 Handle
+                advapi32.CloseServiceHandle(schService)
+                self._installed = True
+            finally:
+                advapi32.CloseServiceHandle(schSCManager)
+
+        # 4. 開啟裝置 Handle
         self.device_handle = kernel32.CreateFileW(
             DEVICE_NAME,
             GENERIC_READ | GENERIC_WRITE,
