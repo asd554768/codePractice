@@ -73,13 +73,14 @@ class NvmeMmioDirect:
         if bar0_phys_addr is not None:
             self.bar0 = bar0_phys_addr
         else:
-            candidates = get_nvme_pci_bar0_addresses()
+            # 優先使用 PCI Configuration Space 物理硬體掃描 (直接讀取 PCI 暫存器，最精準)
+            pci_bar0s = self.driver.find_nvme_pci_bar0()
+            candidates = pci_bar0s if pci_bar0s else get_nvme_pci_bar0_addresses()
             if not candidates:
                 raise RuntimeError("未能在系統中自動偵測到任何 NVMe 控制器的實體 BAR0 位址")
 
             # 逐一探測候選位址，尋找能成功回應 NVMe CAP / VS 暫存器的有效 BAR0
             valid_bar0 = None
-            last_err = None
             for cand in candidates:
                 try:
                     # 讀取 NVMe Version (VS) 暫存器 (offset 0x08)
@@ -89,14 +90,19 @@ class NvmeMmioDirect:
                     if (vs_val >> 16) >= 1:
                         valid_bar0 = cand
                         break
-                except Exception as e:
-                    last_err = e
+                except Exception:
                     continue
 
             if valid_bar0 is not None:
                 self.bar0 = valid_bar0
+            elif pci_bar0s:
+                self.bar0 = pci_bar0s[0]
             else:
-                self.bar0 = candidates[0]
+                cands_hex = ", ".join(f"0x{c:X}" for c in candidates)
+                raise RuntimeError(
+                    f"Direct-MMIO 引擎無法存取 NVMe BAR0 (候選位址: {cands_hex})。\n"
+                    f"原因: Windows 核心安全性保護阻擋實體記憶體映射。請在「通道路徑」選單改選「Pass-Through」或「自動 (Auto)」。"
+                )
         
         # 讀取控制器核心參數
         self.dstrd = self._read_dstrd()

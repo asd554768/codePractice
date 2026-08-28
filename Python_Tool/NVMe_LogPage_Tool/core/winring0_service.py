@@ -27,6 +27,8 @@ INVALID_HANDLE_VALUE = -1
 # IOCTLs
 IOCTL_OLS_READ_MEMORY = 0x9C406104
 IOCTL_OLS_WRITE_MEMORY = 0x9C40A108
+IOCTL_OLS_READ_PCI_CONFIG = 0x9C406144
+IOCTL_OLS_WRITE_PCI_CONFIG = 0x9C40A148
 
 DRIVER_ID = "WinRing0_1_2_0"
 DEVICE_NAME = r"\\.\WinRing0_1_2_0"
@@ -263,6 +265,63 @@ class WinRing0Driver:
         if not res:
             raise OSError(f"WritePhysicalMemory 失敗 (Addr=0x{phys_addr:X}, LastError={ctypes.GetLastError()})")
         return True
+
+    def read_pci_config_dword(self, bus: int, dev: int, func: int, reg_offset: int) -> int:
+        """從 PCI Configuration Space 讀取 32-bit Dword。
+        
+        Args:
+            bus: PCI Bus (0~255)
+            dev: PCI Device (0~31)
+            func: PCI Function (0~7)
+            reg_offset: 暫存器偏移量 (0x00, 0x08, 0x10 等)
+        """
+        pci_addr = (bus << 8) | (dev << 3) | func
+        in_buf = struct.pack("<II", pci_addr, reg_offset)
+        out_buf = ctypes.create_string_buffer(4)
+        bytes_returned = wintypes.DWORD()
+
+        res = ctypes.windll.kernel32.DeviceIoControl(
+            self.device_handle,
+            IOCTL_OLS_READ_PCI_CONFIG,
+            in_buf,
+            len(in_buf),
+            out_buf,
+            4,
+            ctypes.byref(bytes_returned),
+            None
+        )
+        if not res:
+            return 0xFFFFFFFF
+        return struct.unpack("<I", out_buf.raw)[0]
+
+    def find_nvme_pci_bar0(self) -> list:
+        """直接透過 PCI Configuration Space 物理掃描所有 NVMe 控制器 (Class 010802) 的實體 BAR0。
+        
+        完全繞過作業系統與 WMI，從 PCI 暫存器讀取 100% 精準的實體 BAR0 位址。
+        """
+        bar0_list = []
+        for bus in range(256):
+            for dev in range(32):
+                for func in range(8):
+                    # 讀取 Vendor ID (Offset 0x00)
+                    vendor_dev = self.read_pci_config_dword(bus, dev, func, 0x00)
+                    vendor_id = vendor_dev & 0xFFFF
+                    if vendor_id in (0xFFFF, 0x0000):
+                        if func == 0:
+                            break  # 該 Device 無裝置，跳過剩餘 Function
+                        continue
+
+                    # 讀取 Class Code (Offset 0x08)
+                    # ClassCode[31:8] = BaseClass[31:24], SubClass[23:16], ProgIF[15:8]
+                    class_code = self.read_pci_config_dword(bus, dev, func, 0x08)
+                    if (class_code >> 8) == 0x010802:
+                        # 讀取 64-bit BAR0: BAR0 Low (0x10) 與 BAR0 High (0x14)
+                        bar0_low = self.read_pci_config_dword(bus, dev, func, 0x10)
+                        bar0_high = self.read_pci_config_dword(bus, dev, func, 0x14)
+                        phys_bar0 = ((bar0_high << 32) | (bar0_low & 0xFFFFFFF0)) & 0xFFFFFFFFFFFFFFFF
+                        if phys_bar0 and phys_bar0 not in bar0_list:
+                            bar0_list.append(phys_bar0)
+        return bar0_list
 
     def close(self):
         """關閉裝置 Handle。"""
