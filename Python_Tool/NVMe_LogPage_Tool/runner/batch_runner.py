@@ -22,11 +22,13 @@ class SingleResult:
     index: int              # 序號 (1-based)
     lid: int
     lid_name: str
+    numd: int               # NUMD (0-based)
     length_bytes: int
-    status_code: int        # NVMe Status Code (0=成功)
-    latency_ms: float       # 執行耗時 (毫秒)
-    success: bool           # True=PASS, False=FAIL
-    data: Optional[bytes]   # 回傳資料 (失敗時可能為 None)
+    cdw10: int = 0          # NVMe SQE CDW10 暫存器內容
+    status_code: int = -1   # NVMe Status Code (0=成功)
+    latency_ms: float = 0.0 # 執行耗時 (毫秒)
+    success: bool = False   # True=PASS, False=FAIL
+    data: Optional[bytes] = None # 回傳資料 (失敗時可能為 None)
     error_message: str = "" # 錯誤訊息 (成功時為空)
 
 
@@ -96,60 +98,82 @@ class BatchRunner:
             self._reporter = reporter
             total_cases = len(self._config.test_cases)
             
-            with NvmeDriver(self._config.device_number) as driver:
-                for idx, test_case in enumerate(self._config.test_cases):
-                    if self._stop_event.is_set():
-                        break
-                        
-                    cmd = test_case.to_command()
-                    
-                    start_time = time.perf_counter()
-                    data = None
-                    status_code = -1
-                    error_msg = ""
-                    success = False
-                    
-                    try:
-                        data, status_code = driver.get_log_page(cmd)
-                        success = (status_code == 0)
-                        if not success:
-                            error_msg = f"NVMe Error Status: 0x{status_code:X}"
-                    except Exception as e:
-                        error_msg = str(e)
-                        
-                    end_time = time.perf_counter()
-                    latency_ms = (end_time - start_time) * 1000.0
-                    
-                    result = SingleResult(
-                        index=test_case.index,
-                        lid=test_case.lid,
-                        lid_name=test_case.lid_name,
-                        length_bytes=test_case.length_bytes,
-                        status_code=status_code,
-                        latency_ms=latency_ms,
-                        success=success,
-                        data=data,
-                        error_message=error_msg
-                    )
-                    self._results.append(result)
-                    
-                    reporter.save_single_result(result)
-                    
-                    if self.on_result:
-                        self.on_result(result)
-                        
-                    if self.on_progress:
-                        self.on_progress(idx + 1, total_cases)
-                        
-                    if not success and self._config.error_policy == ErrorPolicy.STOP:
-                        break
-                        
-                    if idx < total_cases - 1 and self._config.delay_ms > 0:
-                        # 避免 time.sleep 卡住停止請求，使用 wait 搭配 timeout
-                        if self._stop_event.wait(self._config.delay_ms / 1000.0):
+            try:
+                with NvmeDriver(self._config.device_number) as driver:
+                    for idx, test_case in enumerate(self._config.test_cases):
+                        if self._stop_event.is_set():
                             break
                             
-            reporter.write_summary(self._results)
+                        cmd = test_case.to_command()
+                        
+                        start_time = time.perf_counter()
+                        data = None
+                        status_code = -1
+                        error_msg = ""
+                        success = False
+                        
+                        try:
+                            data, status_code = driver.get_log_page(cmd)
+                            success = (status_code == 0)
+                            if not success:
+                                error_msg = f"NVMe Error Status: 0x{status_code:X}"
+                        except Exception as e:
+                            error_msg = str(e)
+                            
+                        end_time = time.perf_counter()
+                        latency_ms = (end_time - start_time) * 1000.0
+                        
+                        result = SingleResult(
+                            index=test_case.index,
+                            lid=test_case.lid,
+                            lid_name=test_case.lid_name,
+                            numd=test_case.numd,
+                            length_bytes=test_case.length_bytes,
+                            cdw10=cmd.cdw10,
+                            status_code=status_code,
+                            latency_ms=latency_ms,
+                            success=success,
+                            data=data,
+                            error_message=error_msg
+                        )
+                        self._results.append(result)
+                        
+                        reporter.save_single_result(result)
+                        
+                        if self.on_result:
+                            self.on_result(result)
+                            
+                        if self.on_progress:
+                            self.on_progress(idx + 1, total_cases)
+                            
+                        if not success and self._config.error_policy == ErrorPolicy.STOP:
+                            break
+                            
+                        if idx < total_cases - 1 and self._config.delay_ms > 0:
+                            # 避免 time.sleep 卡住停止請求，使用 wait 搭配 timeout
+                            if self._stop_event.wait(self._config.delay_ms / 1000.0):
+                                break
+            except Exception as e:
+                if not self._results and self._config.test_cases:
+                    tc0 = self._config.test_cases[0]
+                    result = SingleResult(
+                        index=1,
+                        lid=tc0.lid,
+                        lid_name=tc0.lid_name,
+                        numd=tc0.numd,
+                        length_bytes=tc0.length_bytes,
+                        cdw10=tc0.to_command().cdw10,
+                        status_code=-1,
+                        latency_ms=0.0,
+                        success=False,
+                        data=None,
+                        error_message=str(e)
+                    )
+                    self._results.append(result)
+                if self.on_error:
+                    self.on_error(str(e))
+            finally:
+                reporter.write_summary(self._results)
             
             if self.on_complete:
                 self.on_complete(self._results)

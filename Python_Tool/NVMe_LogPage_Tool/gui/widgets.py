@@ -38,7 +38,7 @@ class ResultTable(tk.Frame):
     """測試結果表格元件。
     
     使用 ttk.Treeview 顯示批次執行結果。
-    欄位: #, LID, Log Name, Length, Status, Latency, Result
+    欄位: #, LID, Log Name, NUMD, Length, CDW10, Status, Latency, Result
     """
     
     def __init__(self, parent, on_select: Optional[Callable] = None, **kwargs):
@@ -46,16 +46,22 @@ class ResultTable(tk.Frame):
         super().__init__(parent, **kwargs)
         self.on_select = on_select
         
-        columns = ("#", "LID", "Log Name", "Length", "Status", "Latency", "Result")
+        columns = ("#", "LID", "Log Name", "NUMD", "Length", "CDW10", "Status", "Latency", "Result")
         self.tree = ttk.Treeview(self, columns=columns, show="headings")
         
         for col in columns:
             self.tree.heading(col, text=col)
-            self.tree.column(col, width=100, anchor=tk.CENTER)
+            self.tree.column(col, width=75, anchor=tk.CENTER)
         
-        self.tree.column("#", width=50)
-        self.tree.column("Log Name", width=200)
-        self.tree.column("Result", width=80)
+        self.tree.column("#", width=35)
+        self.tree.column("LID", width=55)
+        self.tree.column("Log Name", width=170)
+        self.tree.column("NUMD", width=65)
+        self.tree.column("Length", width=65)
+        self.tree.column("CDW10", width=95)
+        self.tree.column("Status", width=65)
+        self.tree.column("Latency", width=75)
+        self.tree.column("Result", width=65)
         
         self.scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscroll=self.scrollbar.set)
@@ -85,10 +91,12 @@ class ResultTable(tk.Frame):
         
         values = (
             result.index,
-            result.lid,
+            f"0x{result.lid:02X}",
             result.lid_name,
-            result.length_bytes,
-            f"0x{result.status_code:02X}" if result.status_code is not None else "N/A",
+            f"0x{result.numd:02X}",
+            f"{result.length_bytes}B",
+            f"0x{result.cdw10:08X}",
+            f"0x{result.status_code:02X}" if result.status_code is not None and result.status_code >= 0 else "N/A",
             f"{result.latency_ms:.2f} ms" if result.latency_ms is not None else "N/A",
             result_text
         )
@@ -112,20 +120,24 @@ class CsvPreviewTable(tk.Frame):
     """CSV 測試案例預覽表格。
     
     使用 ttk.Treeview 顯示載入的 CSV 內容。
-    欄位: #, LID, Log Name, Length
+    欄位: #, LID, Log Name, NUMD, Length, CDW10
     """
     
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
-        columns = ("#", "LID", "Log Name", "Length")
+        columns = ("#", "LID", "Log Name", "NUMD", "Length", "CDW10")
         self.tree = ttk.Treeview(self, columns=columns, show="headings")
         
         for col in columns:
             self.tree.heading(col, text=col)
-            self.tree.column(col, width=100, anchor=tk.CENTER)
+            self.tree.column(col, width=75, anchor=tk.CENTER)
             
-        self.tree.column("#", width=50)
-        self.tree.column("Log Name", width=200)
+        self.tree.column("#", width=35)
+        self.tree.column("LID", width=55)
+        self.tree.column("Log Name", width=170)
+        self.tree.column("NUMD", width=65)
+        self.tree.column("Length", width=65)
+        self.tree.column("CDW10", width=95)
         
         self.scrollbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self.tree.yview)
         self.tree.configure(yscroll=self.scrollbar.set)
@@ -137,7 +149,15 @@ class CsvPreviewTable(tk.Frame):
         """載入 CsvTestCase 列表到表格。"""
         self.clear()
         for case in cases:
-            values = (case.index, case.lid, case.lid_name, case.length_bytes)
+            cmd = case.to_command()
+            values = (
+                case.index,
+                f"0x{case.lid:02X}",
+                case.lid_name,
+                f"0x{case.numd:02X}",
+                f"{case.length_bytes}B",
+                f"0x{cmd.cdw10:08X}"
+            )
             self.tree.insert("", tk.END, values=values)
     
     def clear(self):

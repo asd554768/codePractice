@@ -19,6 +19,7 @@ def run_cli():
     parser.add_argument("--error-policy", choices=["continue", "stop"], default="continue", help="錯誤策略 (預設 continue)")
     
     parser.add_argument("--lid", type=str, help="單次下發 Log ID (Hex 字串，例如 0x02)")
+    parser.add_argument("--numd", type=str, help="單次下發 NUMD (Hex 或 Dec，例如 0x7F, 7F, 0)")
     parser.add_argument("--length", type=int, help="單次下發 長度(Bytes)")
     
     args = parser.parse_args()
@@ -59,7 +60,7 @@ def run_cli():
         
         def on_res(res):
             status = "PASS" if res.success else "FAIL"
-            print(f"[{status}] #{res.index} LID={res.lid} Length={res.length_bytes} | Latency={res.latency_ms:.2f}ms")
+            print(f"[{status}] #{res.index} LID=0x{res.lid:02X} NUMD=0x{res.numd:02X} CDW10=0x{res.cdw10:08X} ({res.length_bytes}B) | Latency={res.latency_ms:.2f}ms")
             if not res.success and res.error_message:
                 print(f"  Error: {res.error_message}")
         
@@ -71,13 +72,22 @@ def run_cli():
         runner._thread.join()
         print(f"執行完畢。結果已輸出至 {args.output}")
         
-    elif args.lid and args.length:
+    elif args.lid and (args.numd or args.length):
         # 單次下發模式
         lid_val = int(args.lid, 16) if args.lid.startswith("0x") else int(args.lid)
+        
+        if args.numd:
+            numd_val = int(args.numd, 16) if (args.numd.startswith("0x") or any(c in "abcdefABCDEF" for c in args.numd)) else int(args.numd)
+            length_val = (numd_val + 1) * 4
+        else:
+            length_val = args.length
+            numd_val = (length_val // 4) - 1
+            
         case = CsvTestCase(
             index=1,
             lid=lid_val,
-            length_bytes=args.length,
+            numd=numd_val,
+            length_bytes=length_val,
             lid_name="ManualTest"
         )
         
@@ -90,7 +100,7 @@ def run_cli():
         )
         runner = BatchRunner(config)
         
-        print(f"執行單次 Log Page: LID={args.lid}, Length={args.length}")
+        print(f"執行單次 Log Page: LID={args.lid}, NUMD=0x{numd_val:02X} ({length_val}B)")
         runner.start()
         runner._thread.join()
         

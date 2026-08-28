@@ -71,16 +71,25 @@ Offset 0       Offset 80      Offset 144     Offset 208                  Offset 
 
 ---
 
-## 四、NVMe Get Log Page 指令 CDW 編碼經驗
+## 四、NVMe Get Log Page 指令 CDW 編碼與 NUMD 規範
 
 | 暫存器 | 欄位定義 | 組合方式 (Python) | 說明 |
 | :--- | :--- | :--- | :--- |
 | **CDW0** | `OPC` (0x02) | `0x02` | Admin Opcode: Get Log Page |
 | **CDW1** | `NSID` | `0xFFFFFFFF` (或 `0`) | 全域日誌（如 SMART）使用 `0xFFFFFFFF` |
-| **CDW10** | `NUMDL[31:16]`<br>`RAE[15]`<br>`LSP[11:8]`<br>`LID[7:0]` | `((numd & 0xFFFF) << 16) \| ((rae & 1) << 15) \| ((lsp & 0xF) << 8) \| (lid & 0xFF)` | `numd = (aligned_bytes // 4) - 1` |
+| **CDW10** | `NUMDL[31:16]`<br>`RAE[15]`<br>`LSP[11:8]`<br>`LID[7:0]` | `((numd & 0xFFFF) << 16) \| ((rae & 1) << 15) \| ((lsp & 0xF) << 8) \| (lid & 0xFF)` | `Data Length = (NUMD + 1) * 4 Bytes` |
 | **CDW11** | `NUMDU[15:0]` | `(numd >> 16) & 0xFFFF` | 超過 64K Dwords 時的高位傳輸長度 |
 | **CDW12** | `LPOL[31:0]` | `lpo & 0xFFFFFFFF` | Log Page Offset 低 32 位 |
 | **CDW13** | `LPOU[31:0]` | `(lpo >> 32) & 0xFFFFFFFF` | Log Page Offset 高 32 位 |
+
+### CSV 輸入欄位支援 NUMD（16 進位 / 10 進位 / 單位）
+- `7F` 或 `0x7F` $\rightarrow$ NUMD = 127 $\rightarrow$ 資料長度 = **512 Bytes**
+- `FF` 或 `0xFF` $\rightarrow$ NUMD = 255 $\rightarrow$ 資料長度 = **1024 Bytes**
+- `01` 或 `0x01` $\rightarrow$ NUMD = 1 $\rightarrow$ 資料長度 = **8 Bytes**
+- `00` 或 `0x00` $\rightarrow$ NUMD = 0 $\rightarrow$ 資料長度 = **4 Bytes** (最小 Dword)
+- `3FF` 或 `0x3FF` $\rightarrow$ NUMD = 1023 $\rightarrow$ 資料長度 = **4096 Bytes**
+- `4KB` 或 `512B` $\rightarrow$ 自動換算對應 NUMD
+
 
 ---
 

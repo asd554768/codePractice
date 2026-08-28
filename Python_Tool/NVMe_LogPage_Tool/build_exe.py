@@ -16,14 +16,29 @@ def build():
         "--onefile",
         "--windowed",
         "--uac-admin",           # 請求管理員權限
-        "--name", "NVMe_LogPage_Tool_v13",  # 改名為 v13
+        "--name", "NVMe_LogPage_Tool_v16",  # 版本 v16 (含 Critical Bug 修復與 CDW10 全面支援)
         "--add-data", "test_cases;test_cases",
         main_script
     ]
     
     print(f"正在打包: {' '.join(cmd)}")
     subprocess.run(cmd, cwd=script_dir, check=True)
-    print("\n打包完成！執行檔位於 dist/NVMe_LogPage_Tool.exe")
+    
+    exe_name = "NVMe_LogPage_Tool_v16.exe"
+    exe_path = os.path.join(script_dir, "dist", exe_name)
+    zip_path = os.path.join(script_dir, "dist", "NVMe_LogPage_Tool_v16.zip")
+    
+    # 壓縮為 zip
+    import zipfile
+    print(f"\n正在壓縮成 {zip_path} ...")
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        if os.path.exists(exe_path):
+            zf.write(exe_path, arcname=exe_name)
+        sample_csv = os.path.join(script_dir, "test_cases", "sample_test.csv")
+        if os.path.exists(sample_csv):
+            zf.write(sample_csv, arcname=os.path.join("test_cases", "sample_test.csv"))
+            
+    print(f"打包與壓縮完成！\n執行檔：{exe_path}\n壓縮檔：{zip_path}")
 
 if __name__ == "__main__":
     build()

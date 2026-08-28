@@ -33,7 +33,9 @@ class TestReporter(unittest.TestCase):
             index=1,
             lid=0x02,
             lid_name="SMART_Health_Information",
+            numd=0x7F,
             length_bytes=512,
+            cdw10=0x007F0002,
             status_code=0,
             latency_ms=1.25,
             success=True,
@@ -47,7 +49,7 @@ class TestReporter(unittest.TestCase):
         dump_dir = os.path.join(reporter.output_dir, "dump")
         self.assertTrue(os.path.exists(dump_dir))
         
-        base_name = "001_LID_0x02_SMART_Health_Information_512B"
+        base_name = "001_LID_0x02_CDW10_0x007F0002_SMART_Health_Information_512B"
         bin_file = os.path.join(dump_dir, f"{base_name}.bin")
         hex_file = os.path.join(dump_dir, f"{base_name}.hex")
         json_file = os.path.join(dump_dir, f"{base_name}.json")
@@ -73,7 +75,9 @@ class TestReporter(unittest.TestCase):
                 index=1,
                 lid=0x02,
                 lid_name="SMART_Health_Information",
+                numd=0x7F,
                 length_bytes=512,
+                cdw10=0x007F0002,
                 status_code=0,
                 latency_ms=1.2,
                 success=True,
@@ -84,7 +88,9 @@ class TestReporter(unittest.TestCase):
                 index=2,
                 lid=0x01,
                 lid_name="Error_Information",
+                numd=0xFF,
                 length_bytes=1024,
+                cdw10=0x00FF0001,
                 status_code=0x4005,
                 latency_ms=0.8,
                 success=False,
@@ -100,18 +106,24 @@ class TestReporter(unittest.TestCase):
             reader = list(csv.reader(f))
             
             # Header
-            self.assertEqual(reader[0], ["Index", "LID", "LID_Name", "Length", "Status_Code", "Latency_ms", "Result", "Error_Message"])
+            self.assertEqual(reader[0], ["Index", "LID", "LID_Name", "NUMD", "Length_Bytes", "CDW10", "Status_Code", "Latency_ms", "Result", "Error_Message"])
             
             # Row 1 (PASS)
             self.assertEqual(reader[1][0], "1")
             self.assertEqual(reader[1][1], "0x02")
-            self.assertEqual(reader[1][6], "PASS")
+            self.assertEqual(reader[1][3], "0x7F")
+            self.assertEqual(reader[1][4], "512")
+            self.assertEqual(reader[1][5], "0x007F0002")
+            self.assertEqual(reader[1][8], "PASS")
             
             # Row 2 (FAIL)
             self.assertEqual(reader[2][0], "2")
             self.assertEqual(reader[2][1], "0x01")
-            self.assertEqual(reader[2][4], "0x4005")
-            self.assertEqual(reader[2][6], "FAIL")
+            self.assertEqual(reader[2][3], "0xFF")
+            self.assertEqual(reader[2][4], "1024")
+            self.assertEqual(reader[2][5], "0x00FF0001")
+            self.assertEqual(reader[2][6], "0x4005")
+            self.assertEqual(reader[2][8], "FAIL")
             
             # 統計行
             self.assertEqual(reader[4], ["Total", "2"])

@@ -67,6 +67,21 @@ class TestGetLogPageCommand(unittest.TestCase):
         self.assertEqual(cmd_lpo.cdw12, 0x9ABCDEF0)
         self.assertEqual(cmd_lpo.cdw13, 0x12345678)
 
+    def test_direct_numd_specification(self):
+        # NUMD = 0x7F -> length_bytes = 512
+        cmd = GetLogPageCommand(lid=0x02, numd_val=0x7F)
+        self.assertEqual(cmd.numd, 127)
+        self.assertEqual(cmd.numdl, 127)
+        self.assertEqual(cmd.length_bytes, 512)
+        self.assertEqual(cmd.aligned_length, 512)
+        self.assertEqual(cmd.cdw10, 0x007F0002)
+
+        # NUMD = 0x01 -> length_bytes = 8
+        cmd8 = GetLogPageCommand(lid=0xC0, numd_val=1)
+        self.assertEqual(cmd8.numd, 1)
+        self.assertEqual(cmd8.length_bytes, 8)
+        self.assertEqual(cmd8.cdw10, 0x000100C0)
+
 
 if __name__ == "__main__":
     unittest.main()

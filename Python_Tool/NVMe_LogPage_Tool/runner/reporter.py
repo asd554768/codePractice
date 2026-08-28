@@ -46,7 +46,7 @@ class Reporter:
             return
             
         safe_name = result.lid_name.replace(" ", "_").replace("/", "_")
-        base_filename = f"{result.index:03d}_LID_0x{result.lid:02X}_{safe_name}_{result.length_bytes}B"
+        base_filename = f"{result.index:03d}_LID_0x{result.lid:02X}_CDW10_0x{result.cdw10:08X}_{safe_name}_{result.length_bytes}B"
         base_path = os.path.join(self._dump_dir, base_filename)
         
         # 寫入 .bin 檔案
@@ -67,7 +67,7 @@ class Reporter:
     def write_summary(self, results: list) -> str:
         """寫入 summary.csv 彙整報告。
         
-        欄位: Index, LID, LID_Name, Length, Status_Code, Latency_ms, Result, Error_Message
+        欄位: Index, LID, LID_Name, NUMD, Length_Bytes, CDW10, Status_Code, Latency_ms, Result, Error_Message
         
         Returns:
             summary.csv 的完整路徑
@@ -80,14 +80,16 @@ class Reporter:
         
         with open(summary_path, "w", encoding="utf-8", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["Index", "LID", "LID_Name", "Length", "Status_Code", "Latency_ms", "Result", "Error_Message"])
+            writer.writerow(["Index", "LID", "LID_Name", "NUMD", "Length_Bytes", "CDW10", "Status_Code", "Latency_ms", "Result", "Error_Message"])
             
             for r in results:
                 writer.writerow([
                     r.index,
                     f"0x{r.lid:02X}",
                     r.lid_name,
+                    f"0x{r.numd:02X}",
                     r.length_bytes,
+                    f"0x{r.cdw10:08X}",
                     f"0x{r.status_code:X}" if r.status_code >= 0 else str(r.status_code),
                     f"{r.latency_ms:.2f}",
                     "PASS" if r.success else "FAIL",

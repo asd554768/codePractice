@@ -1,15 +1,16 @@
 # NVMe Get Log Page 批次測試範例檔
-# 欄位規範：僅需填寫 LID 與 Length 兩欄 (大小寫不拘)
-# LID: 支援十六進位 (如 0x02) 或十進位 (如 2)
-# Length: 支援純 Byte 數 (如 512, 1024) 或帶單位 (如 4KB, 64K, 1)
+# 欄位規範：LID, NUMD (亦可填入 NUMDL / Length)
+# LID: 支援十六進位 (如 0x02, 0x01) 或十進位 (如 2, 1)
+# NUMD: 支援十六進位 (如 7F, 0x7F, 0x01) 或十進位 (如 127, 1, 0) 或帶單位 (512B, 4KB)
+# 長度公式：Data Length = (NUMD + 1) * 4 Bytes
 
-LID,Length
-0x02,512       # SMART / Health Information (512 Bytes)
-0x01,1024      # Error Information (1024 Bytes)
-0x03,512       # Firmware Slot Information (512 Bytes)
-0x05,4096      # Commands Supported and Effects (4096 Bytes)
-0x06,512       # Device Self-test (512 Bytes)
-0x81,512       # Sanitize Status (512 Bytes)
-0xC0,64        # Vendor Specific Log Page (64 Bytes)
-0x02,4         # 測試最小非對齊長度 (4 Bytes)
-0x02,1         # 測試 1 Byte (底層自動向上對齊並裁切)
+LID,NUMD
+0x02,7F        # SMART / Health Information (NUMD=0x7F -> 512 Bytes)
+0x01,FF        # Error Information (NUMD=0xFF -> 1024 Bytes)
+0x03,7F        # Firmware Slot Information (NUMD=0x7F -> 512 Bytes)
+0x05,3FF       # Commands Supported and Effects (NUMD=0x3FF -> 4096 Bytes)
+0x06,7F        # Device Self-test (NUMD=0x7F -> 512 Bytes)
+0x81,7F        # Sanitize Status (NUMD=0x7F -> 512 Bytes)
+0xC0,0F        # Vendor Specific (NUMD=0x0F -> 64 Bytes)
+0x02,0x00      # 最小 Dword 測試 (NUMD=0x00 -> 4 Bytes)
+0x02,0x01      # 2 Dwords 測試 (NUMD=0x01 -> 8 Bytes)
