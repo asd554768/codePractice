@@ -16,7 +16,7 @@ def build():
         "--onefile",
         "--windowed",
         "--uac-admin",           # 請求管理員權限
-        "--name", "NVMe_LogPage_Tool_v16",  # 版本 v16 (含 Critical Bug 修復與 CDW10 全面支援)
+        "--name", "NVMe_LogPage_Tool_v17",  # 版本 v17 (含 Direct MMIO 與 CDW10 全面支援)
         "--add-data", "test_cases;test_cases",
         main_script
     ]
@@ -24,9 +24,9 @@ def build():
     print(f"正在打包: {' '.join(cmd)}")
     subprocess.run(cmd, cwd=script_dir, check=True)
     
-    exe_name = "NVMe_LogPage_Tool_v16.exe"
+    exe_name = "NVMe_LogPage_Tool_v17.exe"
     exe_path = os.path.join(script_dir, "dist", exe_name)
-    zip_path = os.path.join(script_dir, "dist", "NVMe_LogPage_Tool_v16.zip")
+    zip_path = os.path.join(script_dir, "dist", "NVMe_LogPage_Tool_v17.zip")
     
     # 壓縮為 zip
     import zipfile

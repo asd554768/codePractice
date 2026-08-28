@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['main.py'],
+    ['C:\\Users\\asd55\\OneDrive\\桌面\\code\\myGit\\codePractice\\Python_Tool\\NVMe_LogPage_Tool\\main.py'],
     pathex=[],
     binaries=[],
     datas=[('test_cases', 'test_cases')],
@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='NVMe_LogPage_Tool_v16',
+    name='NVMe_LogPage_Tool_v17',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
