@@ -17,25 +17,37 @@ from .winring0_service import WinRing0Driver
 def get_nvme_pci_bar0_addresses() -> List[int]:
     """自動掃描系統中所有 NVMe 控制器的實體 BAR0 記憶體基底位址。
     
-    透過 Windows WMI 查詢與 stornvme 關聯的 Win32_DeviceMemoryAddress。
+    精確過濾 PCI NVMe 類別碼 (CC_010802) 與 stornvme 服務，並排除非 NVMe 裝置。
     """
     if sys.platform != "win32":
         return []
         
     try:
+        CREATE_NO_WINDOW = 0x08000000
         cmd = [
             "powershell", "-NoProfile", "-Command",
             "Get-CimInstance Win32_PnPEntity | "
-            "Where-Object { $_.Service -eq 'stornvme' -or $_.ClassGuid -eq '{4d36e97b-e325-11ce-bfc1-08002be10318}' } | "
-            "Get-CimAssociatedInstance -ResultClassName 'Win32_DeviceMemoryAddress' | "
-            "Select-Object -ExpandProperty StartingAddress"
+            "Where-Object { $_.Service -eq 'stornvme' -or $_.CompatibleID -like '*CC_010802*' -or $_.HardwareID -like '*CC_010802*' } | "
+            "ForEach-Object { "
+            "  $pnp = $_; "
+            "  Get-CimAssociatedInstance -InputObject $pnp -ResultClassName 'Win32_DeviceMemoryAddress' | "
+            "  Select-Object StartingAddress, EndingAddress "
+            "} | ForEach-Object { '{0}:{1}' -f $_.StartingAddress, $_.EndingAddress }"
         ]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=5, creationflags=CREATE_NO_WINDOW)
         addresses = []
         for line in res.stdout.strip().splitlines():
-            line_str = line.strip()
-            if line_str.isdigit():
-                addr = int(line_str)
+            if ":" in line:
+                parts = line.strip().split(":")
+                if parts[0].isdigit() and parts[1].isdigit():
+                    start = int(parts[0])
+                    end = int(parts[1])
+                    size = end - start + 1
+                    # NVMe BAR0 規範至少為 16KB (0x4000)
+                    if size >= 0x4000 and start not in addresses:
+                        addresses.append(start)
+            elif line.strip().isdigit():
+                addr = int(line.strip())
                 if addr not in addresses:
                     addresses.append(addr)
         return addresses
@@ -56,15 +68,35 @@ class NvmeMmioDirect:
             bar0_phys_addr: NVMe Controller 的實體 BAR0 基底位址。若為 None 則自動掃描。
             sys_path: WinRing0x64.sys 路徑。
         """
-        if bar0_phys_addr is None:
-            detected = get_nvme_pci_bar0_addresses()
-            if not detected:
-                raise RuntimeError("未能在系統中自動偵測到任何 NVMe 控制器的實體 BAR0 位址")
-            self.bar0 = detected[0]
-        else:
-            self.bar0 = bar0_phys_addr
-
         self.driver = WinRing0Driver(sys_path)
+
+        if bar0_phys_addr is not None:
+            self.bar0 = bar0_phys_addr
+        else:
+            candidates = get_nvme_pci_bar0_addresses()
+            if not candidates:
+                raise RuntimeError("未能在系統中自動偵測到任何 NVMe 控制器的實體 BAR0 位址")
+
+            # 逐一探測候選位址，尋找能成功回應 NVMe CAP / VS 暫存器的有效 BAR0
+            valid_bar0 = None
+            last_err = None
+            for cand in candidates:
+                try:
+                    # 讀取 NVMe Version (VS) 暫存器 (offset 0x08)
+                    vs_bytes = self.driver.read_physical_memory(cand + 0x08, 4, unit_size=4)
+                    vs_val = struct.unpack("<I", vs_bytes)[0]
+                    # 有效 NVMe 版本如 0x00010300 (1.3), 0x00010400 (1.4), 0x00020000 (2.0)
+                    if (vs_val >> 16) >= 1:
+                        valid_bar0 = cand
+                        break
+                except Exception as e:
+                    last_err = e
+                    continue
+
+            if valid_bar0 is not None:
+                self.bar0 = valid_bar0
+            else:
+                self.bar0 = candidates[0]
         
         # 讀取控制器核心參數
         self.dstrd = self._read_dstrd()
