@@ -61,9 +61,52 @@ class WinRing0Driver:
                 return os.path.abspath(p)
         return os.path.abspath("WinRing0x64.sys")
 
+    def _setup_api_prototypes(self):
+        """設定 64-bit Windows API 的參數型態與回傳型態 (避免指標被截斷為 32-bit)。"""
+        advapi32 = ctypes.windll.advapi32
+        kernel32 = ctypes.windll.kernel32
+
+        advapi32.OpenSCManagerW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD]
+        advapi32.OpenSCManagerW.restype = wintypes.HANDLE
+
+        advapi32.CreateServiceW.argtypes = [
+            wintypes.HANDLE, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+            wintypes.DWORD, wintypes.DWORD, wintypes.DWORD, wintypes.LPCWSTR,
+            wintypes.LPCWSTR, wintypes.LPDWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPCWSTR
+        ]
+        advapi32.CreateServiceW.restype = wintypes.HANDLE
+
+        advapi32.OpenServiceW.argtypes = [wintypes.HANDLE, wintypes.LPCWSTR, wintypes.DWORD]
+        advapi32.OpenServiceW.restype = wintypes.HANDLE
+
+        advapi32.StartServiceW.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p]
+        advapi32.StartServiceW.restype = wintypes.BOOL
+
+        advapi32.CloseServiceHandle.argtypes = [wintypes.HANDLE]
+        advapi32.CloseServiceHandle.restype = wintypes.BOOL
+
+        kernel32.CreateFileW.argtypes = [
+            wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+            ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE
+        ]
+        kernel32.CreateFileW.restype = wintypes.HANDLE
+
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        kernel32.DeviceIoControl.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
+            ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p
+        ]
+        kernel32.DeviceIoControl.restype = wintypes.BOOL
+
     def _start_and_open(self):
+        self._setup_api_prototypes()
+        advapi32 = ctypes.windll.advapi32
+        kernel32 = ctypes.windll.kernel32
+
         # 1. 嘗試直接開啟既有裝置
-        self.device_handle = ctypes.windll.kernel32.CreateFileW(
+        self.device_handle = kernel32.CreateFileW(
             DEVICE_NAME,
             GENERIC_READ | GENERIC_WRITE,
             0,
@@ -72,14 +115,13 @@ class WinRing0Driver:
             0,
             None
         )
-        if self.device_handle != INVALID_HANDLE_VALUE:
+        if self.device_handle and self.device_handle not in (INVALID_HANDLE_VALUE, 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFF):
             return
 
         # 2. 若未載入，透過 Service Control Manager 註冊並啟動服務
         if not os.path.exists(self.sys_path):
             raise FileNotFoundError(f"找不到 WinRing0x64.sys 驅動檔案: {self.sys_path}")
 
-        advapi32 = ctypes.windll.advapi32
         schSCManager = advapi32.OpenSCManagerW(None, None, SC_MANAGER_ALL_ACCESS)
         if not schSCManager:
             raise PermissionError(f"無法開啟 Service Control Manager (LastError={ctypes.GetLastError()})，請以管理員身分執行")
@@ -127,7 +169,7 @@ class WinRing0Driver:
             advapi32.CloseServiceHandle(schSCManager)
 
         # 3. 重新開啟裝置 Handle
-        self.device_handle = ctypes.windll.kernel32.CreateFileW(
+        self.device_handle = kernel32.CreateFileW(
             DEVICE_NAME,
             GENERIC_READ | GENERIC_WRITE,
             0,
@@ -136,7 +178,7 @@ class WinRing0Driver:
             0,
             None
         )
-        if self.device_handle == INVALID_HANDLE_VALUE:
+        if not self.device_handle or self.device_handle in (INVALID_HANDLE_VALUE, 0xFFFFFFFFFFFFFFFF, 0xFFFFFFFF):
             err = ctypes.GetLastError()
             raise OSError(f"無法開啟 WinRing0 驅動裝置 \\\\.\\WinRing0_1_2_0 (LastError={err})")
 
