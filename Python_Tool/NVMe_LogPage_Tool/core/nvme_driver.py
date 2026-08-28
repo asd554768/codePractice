@@ -81,19 +81,13 @@ class NvmeDriver:
             return data, status, name
 
         # 自動模式 (Auto)：
-        # 若使用者指定了非 512B (NUMD != 0x7F) 之精確值，不使用微軟硬性綁定 512B 的 Protocol-Query 通道
-        if cmd.numd != 0x7F:
-            methods = [
-                ("Direct-MMIO-Ring0", self._get_log_page_direct_mmio),
-                ("Pass-Through", self._get_log_page_passthrough),
-            ]
-        else:
-            methods = [
-                ("Direct-MMIO-Ring0", self._get_log_page_direct_mmio),
-                ("Pass-Through", self._get_log_page_passthrough),
-                ("Protocol-Query", self._get_log_page_query_property),
-                ("Miniport-Pass-Through", self._get_log_page_intel_miniport),
-            ]
+        # 依序嘗試 Direct-MMIO -> Pass-Through -> Protocol-Query -> Miniport
+        methods = [
+            ("Direct-MMIO-Ring0", self._get_log_page_direct_mmio),
+            ("Pass-Through", self._get_log_page_passthrough),
+            ("Protocol-Query", self._get_log_page_query_property),
+            ("Miniport-Pass-Through", self._get_log_page_intel_miniport),
+        ]
 
         errors = []
         for name, method in methods:
@@ -205,10 +199,15 @@ class NvmeDriver:
         raise OSError(f"DeviceIoControl (Pass-Through) failed with Windows error {last_error_code}")
 
     def _get_log_page_query_property(self, cmd: GetLogPageCommand) -> Tuple[bytes, int]:
-        """透過 IOCTL_STORAGE_QUERY_PROPERTY 查詢 Protocol Specific Log Page。"""
-        query_data_len = 512 if cmd.aligned_length <= 512 else cmd.aligned_length
+        """透過 IOCTL_STORAGE_QUERY_PROPERTY 查詢 Protocol Specific Log Page。
+        
+        關鍵修復：ProtocolDataLength 直接傳入精確對齊長度 (例如 NUMD=0x00 時傳入 4 Bytes)。
+        微軟 stornvme.sys 核心在封裝 NVMe SQE 時，會將 CDW10.NUMDL 計算為 (ProtocolDataLength / 4) - 1。
+        當傳入 4 時，stornvme.sys 會在 SQE CDW10 中填入 0x00，下發給硬體的即為真實的 0x000000F0！
+        """
+        query_data_len = cmd.aligned_length
         header_size = 48  # 8 (STORAGE_PROPERTY_QUERY) + 40 (STORAGE_PROTOCOL_SPECIFIC_DATA)
-        out_size = header_size + query_data_len
+        out_size = max(header_size + query_data_len, header_size + 512)
 
         last_error = None
         # 測試組合：(PropertyId, SubValue, in_size)
