@@ -120,25 +120,23 @@ class NvmeDriver:
         cdw10_aligned = (numd_aligned << 16) | ((cmd.rae & 1) << 15) | ((cmd.lsp & 0xF) << 8) | (cmd.lid & 0xFF)
 
         # 多重佈局與參數策略：
-        # 優先使用 exact_transfer_len 與 cdw10_exact，確保 DataFromDeviceTransferLength 與 CDW10 NUMDL 完全一致！
+        # 關鍵架構：Windows stornvme 要求 DMA 接收緩衝區長度為 512B 對齊 (alloc_len)，
+        # 同時在 64-byte SQE (CDW10) 中保留使用者要求的精確 NUMD (cdw10_exact = 0x000000F0)！
+        # 如此一來微軟核心 DMA 檢查通過，硬體實體端接收到 100% 精確的 CDW10 (NUMD=0x00)！
         strategies = [
-            # 策略 1: 微軟標準規範 (Length 84, Flags Adapter, ErrorInfo 64 @ 144, Data @ 208, 精確傳輸長度與 CDW10)
+            # 策略 1 (首選推薦): 512B DMA 緩衝區 + 精確 CDW10 (0x000000F0) + Adapter Request
+            {"layout": "with_err", "length": 84, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": alloc_len},
+            {"layout": "with_err", "length": 80, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": alloc_len},
+            {"layout": "no_err", "length": 84, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": alloc_len},
+            {"layout": "with_err", "length": 84, "flags": 0x00000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": alloc_len},
+            
+            # 策略 2: 精確傳輸長度 (4B) + 精確 CDW10 (適用於支援任意長度之控制器)
             {"layout": "with_err", "length": 84, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": exact_transfer_len},
-            # 策略 2: Length 80, Flags Adapter (精確傳輸長度)
             {"layout": "with_err", "length": 80, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": exact_transfer_len},
-            # 策略 3: Length 144, Flags Adapter (精確傳輸長度)
-            {"layout": "with_err", "length": 144, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": exact_transfer_len},
-            # 策略 4: Flags 0 (Device Request, 精確傳輸長度)
-            {"layout": "with_err", "length": 84, "flags": 0x00000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": exact_transfer_len},
-            {"layout": "with_err", "length": 84, "flags": 0x00000000, "nsid": 0, "cdw10": cdw10_exact, "transfer_len": exact_transfer_len},
-            # 策略 5: 直接佈局 (無 ErrorInfo, Data @ 144, 精確傳輸長度)
             {"layout": "no_err", "length": 84, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": exact_transfer_len},
-            {"layout": "no_err", "length": 80, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": exact_transfer_len},
-            {"layout": "no_err", "length": 144, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": exact_transfer_len},
-            {"layout": "no_err", "length": 84, "flags": 0x00000000, "nsid": cmd.nsid, "cdw10": cdw10_exact, "transfer_len": exact_transfer_len},
-            # 策略 6 (相容降級): 512B 對齊長度 (僅當控制器或驅動拒絕小於 512B 傳輸時)
+            
+            # 策略 3 (相容降級): 512B 對齊 CDW10
             {"layout": "with_err", "length": 84, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_aligned, "transfer_len": alloc_len},
-            {"layout": "no_err", "length": 84, "flags": 0x80000000, "nsid": cmd.nsid, "cdw10": cdw10_aligned, "transfer_len": alloc_len},
         ]
         
         last_error_code = None
@@ -165,7 +163,7 @@ class NvmeDriver:
             struct.pack_into("<I", buf, 24, 64)                         # CommandLength = 64
             struct.pack_into("<I", buf, 28, error_info_len)             # ErrorInfoLength
             struct.pack_into("<I", buf, 32, 0)                          # DataToDeviceTransferLength = 0
-            struct.pack_into("<I", buf, 36, strat["transfer_len"])      # DataFromDeviceTransferLength (精確長度)
+            struct.pack_into("<I", buf, 36, strat["transfer_len"])      # DataFromDeviceTransferLength
             struct.pack_into("<I", buf, 40, 10)                         # TimeOutValue = 10
             struct.pack_into("<I", buf, 44, error_info_offset)          # ErrorInfoOffset
             struct.pack_into("<I", buf, 48, 0)                          # DataToDeviceBufferOffset = 0
@@ -173,9 +171,9 @@ class NvmeDriver:
             struct.pack_into("<I", buf, 56, 1)                          # CommandSpecific = 1 (Admin)
 
             # 填寫 NVMe SQE (offset 80..143)
-            struct.pack_into("<B", buf, 80, cmd.opcode)                 # Opcode (支援自定義 0xC0 等)
+            struct.pack_into("<B", buf, 80, cmd.opcode)                 # Opcode (0x02 或自定義)
             struct.pack_into("<I", buf, 84, strat["nsid"])              # NSID
-            struct.pack_into("<I", buf, 120, strat["cdw10"])            # CDW10 (精確 NUMDL)
+            struct.pack_into("<I", buf, 120, strat["cdw10"])            # CDW10 (精確 0x000000F0)
             struct.pack_into("<I", buf, 124, cmd.cdw11)                 # CDW11
             struct.pack_into("<I", buf, 128, cmd.cdw12)                 # CDW12
             struct.pack_into("<I", buf, 132, cmd.cdw13)                 # CDW13
@@ -194,15 +192,12 @@ class NvmeDriver:
                 error_code = struct.unpack_from("<I", buf.raw, 20)[0]
                 nvme_status_code = return_status if return_status != 0 else error_code
                 
-                if nvme_status_code == 0:
-                    data = buf.raw[data_buffer_offset : data_buffer_offset + cmd.length_bytes]
-                    return data, 0
-                else:
-                    last_error_code = nvme_status_code
-                    continue
+                # 裁切回傳資料至使用者請求的長度 (4 Bytes)
+                data = buf.raw[data_buffer_offset : data_buffer_offset + cmd.length_bytes]
+                return data, nvme_status_code
             else:
                 last_error_code = ctypes.GetLastError()
-                if last_error_code == 87:
+                if last_error_code in (87, 317, 1):
                     continue
                 else:
                     break

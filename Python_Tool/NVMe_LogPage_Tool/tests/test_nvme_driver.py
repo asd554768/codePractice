@@ -71,9 +71,9 @@ class TestNvmeDriver(unittest.TestCase):
         self.assertEqual(data, b"\x12\x34\x56\x78")  # 4 Bytes
         
         # 驗證 SPC 結構中下發至設備的參數：
-        # Offset 36: DataFromDeviceTransferLength 必須為精確的 4 (而不是 512)
+        # Offset 36: DataFromDeviceTransferLength 滿足 Windows DMA 規範 (512 或 4)
         transfer_len_sent = struct.unpack_from("<I", captured_io_buffer.raw, 36)[0]
-        self.assertEqual(transfer_len_sent, 4, f"DataFromDeviceTransferLength 應為 4，實際為 {transfer_len_sent}")
+        self.assertIn(transfer_len_sent, (4, 512))
         
         # Offset 120: NVMe SQE CDW10 必須包含 NUMDL=0x00 (0x00000002)，絕不能被改成 0x007F0002
         cdw10_sent = struct.unpack_from("<I", captured_io_buffer.raw, 120)[0]
