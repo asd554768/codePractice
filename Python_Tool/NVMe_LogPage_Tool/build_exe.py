@@ -16,8 +16,9 @@ def build():
         "--onefile",
         "--windowed",
         "--uac-admin",           # 請求管理員權限
-        "--name", "NVMe_LogPage_Tool_v17",  # 版本 v17 (含 Direct MMIO 與 CDW10 全面支援)
+        "--name", "NVMe_LogPage_Tool_v17",  # 版本 v17 (含 Ring0 直通與 CDW10 全面支援)
         "--add-data", "test_cases;test_cases",
+        "--add-data", "WinRing0x64.sys;.",
         main_script
     ]
     
@@ -28,12 +29,15 @@ def build():
     exe_path = os.path.join(script_dir, "dist", exe_name)
     zip_path = os.path.join(script_dir, "dist", "NVMe_LogPage_Tool_v17.zip")
     
-    # 壓縮為 zip
+    # 壓縮為 zip (包含 .exe, WinRing0x64.sys 與範例 test_cases)
     import zipfile
     print(f"\n正在壓縮成 {zip_path} ...")
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
         if os.path.exists(exe_path):
             zf.write(exe_path, arcname=exe_name)
+        sys_driver = os.path.join(script_dir, "WinRing0x64.sys")
+        if os.path.exists(sys_driver):
+            zf.write(sys_driver, arcname="WinRing0x64.sys")
         sample_csv = os.path.join(script_dir, "test_cases", "sample_test.csv")
         if os.path.exists(sample_csv):
             zf.write(sample_csv, arcname=os.path.join("test_cases", "sample_test.csv"))

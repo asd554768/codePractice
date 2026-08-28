@@ -29,17 +29,39 @@ class NvmeDriver:
             raise RuntimeError("此模組僅支援 Windows 平臺")
         self.drive_number = physical_drive_number
         self.handle = open_device(physical_drive_number)
+        self._mmio_engine = None
+
+    def _get_log_page_direct_mmio(self, cmd: GetLogPageCommand) -> Tuple[bytes, int]:
+        """透過 Direct PCIe MMIO 與 Physical Memory 直接發送 SQE (繞過 stornvme.sys)。"""
+        from .nvme_mmio_direct import NvmeMmioDirect
+        if self._mmio_engine is None:
+            self._mmio_engine = NvmeMmioDirect()
+
+        # 準備接收資料暫存區實體位址 (使用 ASQ 尾部或預設 DMA 空間)
+        data_phys_addr = self._mmio_engine.asq_phys + 0x1000
+        success, status = self._mmio_engine.send_raw_get_log_page(
+            lid=cmd.lid,
+            numd=cmd.numd,
+            data_buffer_phys_addr=data_phys_addr,
+            nsid=cmd.nsid
+        )
+        if success and status == 0:
+            # 從實體記憶體讀取回傳資料
+            raw_data = self._mmio_engine.driver.read_physical_memory(data_phys_addr, cmd.length_bytes)
+            return raw_data[:cmd.length_bytes], 0
+        raise OSError(f"Direct MMIO 指令回傳非零狀態碼: {status}")
 
     def get_log_page(self, cmd: GetLogPageCommand) -> Tuple[bytes, int]:
         """執行 Get Log Page 指令。
         
-        三重通道降級策略：
-        1. Protocol-Query (IOCTL_STORAGE_QUERY_PROPERTY - 微軟原生存取)
+        多重通道降級策略：
+        1. Direct-MMIO-Ring0 (繞過微軟 stornvme.sys 審查，直接敲 Doorbell 下發 100% 原始 CDW10)
         2. Standard Pass-Through (IOCTL_STORAGE_PROTOCOL_COMMAND - 通用 Windows 10/11)
-        3. Intel/OEM Miniport Pass-Through (IOCTL_SCSI_MINIPORT - Intel RST/VMD/專用驅動)
+        3. Protocol-Query (IOCTL_STORAGE_QUERY_PROPERTY - 微軟原生存取)
+        4. Intel/OEM Miniport Pass-Through (IOCTL_SCSI_MINIPORT - Intel RST/VMD/專用驅動)
         """
-        # 優先走 Standard Pass-Through，以確保精確下發使用者自定義之 CDW10 / NUMD
         methods = [
+            ("Direct-MMIO-Ring0", self._get_log_page_direct_mmio),
             ("Pass-Through", self._get_log_page_passthrough),
             ("Protocol-Query", self._get_log_page_query_property),
             ("Miniport-Pass-Through", self._get_log_page_intel_miniport),

@@ -5,7 +5,7 @@ a = Analysis(
     ['C:\\Users\\asd55\\OneDrive\\桌面\\code\\myGit\\codePractice\\Python_Tool\\NVMe_LogPage_Tool\\main.py'],
     pathex=[],
     binaries=[],
-    datas=[('test_cases', 'test_cases')],
+    datas=[('test_cases', 'test_cases'), ('WinRing0x64.sys', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

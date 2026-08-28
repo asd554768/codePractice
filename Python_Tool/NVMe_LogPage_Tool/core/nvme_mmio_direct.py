@@ -11,6 +11,8 @@ import sys
 import time
 from typing import Tuple, Optional, List
 
+from .winring0_service import WinRing0Driver
+
 
 def get_nvme_pci_bar0_addresses() -> List[int]:
     """自動掃描系統中所有 NVMe 控制器的實體 BAR0 記憶體基底位址。
@@ -44,15 +46,15 @@ def get_nvme_pci_bar0_addresses() -> List[int]:
 class NvmeMmioDirect:
     """透過 Direct MMIO 與 Physical Memory 直接向 NVMe 控制器發送 Raw SQE。
     
-    支援 WinRing0 (WinRing0x64.dll) / RwDrv / 實體記憶體映射。
+    直接與 WinRing0x64.sys 驅動通訊，繞過 Windows Storage Stack。
     """
 
-    def __init__(self, bar0_phys_addr: Optional[int] = None, ring0_dll_path: str = "WinRing0x64.dll"):
+    def __init__(self, bar0_phys_addr: Optional[int] = None, sys_path: Optional[str] = None):
         """初始化 Direct MMIO 引擎。
         
         Args:
             bar0_phys_addr: NVMe Controller 的實體 BAR0 基底位址。若為 None 則自動掃描。
-            ring0_dll_path: WinRing0x64.dll 路徑。
+            sys_path: WinRing0x64.sys 路徑。
         """
         if bar0_phys_addr is None:
             detected = get_nvme_pci_bar0_addresses()
@@ -62,8 +64,7 @@ class NvmeMmioDirect:
         else:
             self.bar0 = bar0_phys_addr
 
-        self.ols = None
-        self._init_driver(ring0_dll_path)
+        self.driver = WinRing0Driver(sys_path)
         
         # 讀取控制器核心參數
         self.dstrd = self._read_dstrd()
@@ -75,52 +76,18 @@ class NvmeMmioDirect:
         
         self.current_cid = 1
 
-    def _init_driver(self, dll_path: str):
-        """載入並初始化 WinRing0 核心介面。"""
-        # 搜尋路徑順序：自訂路徑 -> 當前工作目錄 -> 模組目錄 -> System32
-        candidates = [
-            dll_path,
-            os.path.join(os.getcwd(), dll_path),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), dll_path),
-            os.path.join(os.environ.get("WINDIR", "C:\\Windows"), "System32", dll_path),
-        ]
-        
-        loaded = False
-        last_err = None
-        for path in candidates:
-            if os.path.exists(path):
-                try:
-                    self.ols = ctypes.windll.LoadLibrary(path)
-                    if hasattr(self.ols, 'InitializeOls') and self.ols.InitializeOls():
-                        loaded = True
-                        break
-                except Exception as e:
-                    last_err = e
-                    
-        if not loaded:
-            raise RuntimeError(
-                f"無法載入或初始化 WinRing0x64.dll ({last_err or '找不到驅動或缺少管理員權限'})。\n"
-                "請確認 WinRing0x64.dll 與 WinRing0x64.sys 已放置於程式目錄，並以管理員身分執行。"
-            )
-
     # === MMIO 讀寫底層 ===
     def _read_mmio_32(self, offset: int) -> int:
-        val = ctypes.c_uint32()
-        res = self.ols.ReadPhysicalMemory(self.bar0 + offset, ctypes.byref(val), 4, 4)
-        if not res:
-            raise OSError(f"MMIO 讀取失敗: BAR0+0x{offset:X} (Addr=0x{self.bar0+offset:X})")
-        return val.value
+        raw_bytes = self.driver.read_physical_memory(self.bar0 + offset, 4, unit_size=4)
+        return struct.unpack("<I", raw_bytes)[0]
 
     def _write_mmio_32(self, offset: int, value: int):
-        val = ctypes.c_uint32(value)
-        res = self.ols.WritePhysicalMemory(self.bar0 + offset, ctypes.byref(val), 4, 4)
-        if not res:
-            raise OSError(f"MMIO 寫入失敗: BAR0+0x{offset:X} (Addr=0x{self.bar0+offset:X}, Val=0x{value:08X})")
+        data = struct.pack("<I", value)
+        self.driver.write_physical_memory(self.bar0 + offset, data, unit_size=4)
 
     def _read_mmio_64(self, offset: int) -> int:
-        low = self._read_mmio_32(offset)
-        high = self._read_mmio_32(offset + 4)
-        return (high << 32) | low
+        raw_bytes = self.driver.read_physical_memory(self.bar0 + offset, 8, unit_size=4)
+        return struct.unpack("<Q", raw_bytes)[0]
 
     def _read_dstrd(self) -> int:
         """讀取 CAP 暫存器中的 Doorbell Stride (CAP.DSTRD bits [35:32])。"""
@@ -168,10 +135,7 @@ class NvmeMmioDirect:
         
         # 3. 直寫實體記憶體中的 Admin SQ 槽位
         sqe_phys_addr = self.asq_phys + (current_tail * 64)
-        c_sqe_buf = (ctypes.c_char * 64).from_buffer(sqe)
-        write_res = self.ols.WritePhysicalMemory(sqe_phys_addr, ctypes.byref(c_sqe_buf), 64, 1)
-        if not write_res:
-            raise OSError(f"寫入 Admin SQ 實體記憶體失敗 (Addr=0x{sqe_phys_addr:X})")
+        self.driver.write_physical_memory(sqe_phys_addr, bytes(sqe), unit_size=4)
 
         # 4. 敲擊 Admin SQ0 Tail Doorbell 通知控制器執行！
         new_tail = (current_tail + 1) % self.asq_size
@@ -182,13 +146,13 @@ class NvmeMmioDirect:
         return True, 0
 
     def close(self):
-        """釋放 Ring0 驅動連線。"""
-        if hasattr(self, 'ols') and self.ols:
+        """釋放驅動連線。"""
+        if hasattr(self, 'driver') and self.driver:
             try:
-                self.ols.DeinitializeOls()
+                self.driver.close()
             except Exception:
                 pass
-            self.ols = None
+            self.driver = None
 
     def __enter__(self):
         return self
