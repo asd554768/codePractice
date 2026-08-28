@@ -38,20 +38,12 @@ class NvmeDriver:
         2. Standard Pass-Through (IOCTL_STORAGE_PROTOCOL_COMMAND - 通用 Windows 10/11)
         3. Intel/OEM Miniport Pass-Through (IOCTL_SCSI_MINIPORT - Intel RST/VMD/專用驅動)
         """
-        is_vendor = (0xC0 <= cmd.lid <= 0xFF)
-        
-        if is_vendor:
-            methods = [
-                ("Pass-Through", self._get_log_page_passthrough),
-                ("Miniport-Pass-Through", self._get_log_page_intel_miniport),
-                ("Protocol-Query", self._get_log_page_query_property),
-            ]
-        else:
-            methods = [
-                ("Protocol-Query", self._get_log_page_query_property),
-                ("Pass-Through", self._get_log_page_passthrough),
-                ("Miniport-Pass-Through", self._get_log_page_intel_miniport),
-            ]
+        # 優先走 Standard Pass-Through，以確保精確下發使用者自定義之 CDW10 / NUMD
+        methods = [
+            ("Pass-Through", self._get_log_page_passthrough),
+            ("Protocol-Query", self._get_log_page_query_property),
+            ("Miniport-Pass-Through", self._get_log_page_intel_miniport),
+        ]
 
         errors = []
         for name, method in methods:
@@ -284,9 +276,9 @@ class NvmeDriver:
                     io_buf.header.ReturnBufferLen = hdr_size + transfer_len
                     
                     # NVMe Command SQE
-                    io_buf.header.NVMeCmd[0] = OPCODE_GET_LOG_PAGE | (numd << 16)
+                    io_buf.header.NVMeCmd[0] = OPCODE_GET_LOG_PAGE | ((cmd.numd & 0xFFFF) << 16)
                     io_buf.header.NVMeCmd[1] = cmd.nsid
-                    io_buf.header.NVMeCmd[10] = cdw10
+                    io_buf.header.NVMeCmd[10] = cmd.cdw10
                     io_buf.header.NVMeCmd[11] = cmd.cdw11
                     io_buf.header.NVMeCmd[12] = cmd.cdw12
                     io_buf.header.NVMeCmd[13] = cmd.cdw13
