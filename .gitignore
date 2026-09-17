@@ -13,3 +13,5 @@ results/
 build/
 *.spec
 
+# Expense Analyzer
+Python_Tool/expense_analyzer/
