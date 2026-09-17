@@ -81,6 +81,36 @@ class TestNvmeDriver(unittest.TestCase):
 
     @patch("core.nvme_driver.device_io_control")
     @patch("core.nvme_driver.open_device")
+    def test_win11_underrun_return_status_1_handled_as_pass(self, mock_open, mock_ioctl):
+        """驗證 Windows 11 Storport 512B vs 4B Underrun 誤判校正：
+        即使 ReturnStatus=1，但 CQE DW3 SC=0, SCT=0 且有資料時，判定為 status=0 (PASS)。
+        """
+        mock_open.return_value = 100
+
+        def fake_ioctl(handle, ioctl_code, in_buf, in_size, out_buf, out_size):
+            if ioctl_code == IOCTL_STORAGE_PROTOCOL_COMMAND:
+                # 模擬 Windows 11 Storport 填寫 ReturnStatus = 1 (Underrun)
+                struct.pack_into("<I", out_buf, 16, 1)
+                struct.pack_into("<I", out_buf, 20, 0)
+                # Offset 144: CQE DW3 @ 156 設定為 0x00010001 (Phase=1, SC=0, SCT=0, CID=1 -> 成功)
+                struct.pack_into("<I", out_buf, 156, 0x00010001)
+                # Offset 208 寫入 4 Bytes 回應資料
+                ctypes.memmove(ctypes.byref(out_buf, 208), b"\xDE\xAD\xBE\xEF", 4)
+                return True, in_size
+            return False, 0
+
+        mock_ioctl.side_effect = fake_ioctl
+
+        with NvmeDriver(1) as driver:
+            cmd = GetLogPageCommand(lid=0xF0, numd_val=0)
+            data, status, channel = driver.get_log_page(cmd)
+
+        self.assertEqual(status, 0, "Windows 11 Underrun 誤報 1 應被成功校正為 0 (PASS)")
+        self.assertEqual(channel, "Pass-Through")
+        self.assertEqual(data, b"\xDE\xAD\xBE\xEF")
+
+    @patch("core.nvme_driver.device_io_control")
+    @patch("core.nvme_driver.open_device")
     def test_get_log_page_fallback_to_query_property(self, mock_open, mock_dev_ioctl):
         mock_open.return_value = 100
         

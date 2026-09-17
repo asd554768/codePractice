@@ -1,6 +1,6 @@
-﻿# Windows NVMe 底層通訊、IOCTL、Ring0 MMIO 與驅動實戰經驗全紀錄 (v19)
+﻿# Windows NVMe 底層通訊、IOCTL、Ring0 MMIO 與驅動實戰經驗全紀錄 (v20)
 
-本文件完整記錄在 Windows 平臺開發 NVMe Get Log Page 工具、對接微軟 `stornvme.sys`、第三方 Miniport 驅動以及基於 `WinRing0` 的 Direct-MMIO 核心直通引擎時所累積的底層除錯經驗、通訊架構與 49 項單元測試設計規範。
+本文件完整記錄在 Windows 平臺開發 NVMe Get Log Page 工具、對接微軟 `stornvme.sys`、第三方 Miniport 驅動以及基於 `WinRing0` 的 Direct-MMIO 核心直通引擎時所累積的底層除錯經驗、通訊架構與 50 項單元測試設計規範。
 
 ---
 
@@ -31,6 +31,7 @@ WinRing0x64.sys (Ring0)       IOCTL_STORAGE_PROTOCOL_CMD   IOCTL_STORAGE_QUERY_P
 | :--- | :--- | :--- | :--- |
 | **87** | `ERROR_INVALID_PARAMETER` | 1. **`ProtocolType` 誤設為 1 (SCSI)**：Windows SDK `STORAGE_PROTOCOL_TYPE` 定義 `ProtocolTypeNvme = 3`（1 為 SCSI、2 為 ATA）。<br>2. `STORAGE_PROTOCOL_COMMAND` 記憶體排版缺少 64B `ErrorInfo` 空間。<br>3. `DataFromDeviceBufferOffset` 偏移量不正確。<br>4. **WinRing0 `ReadPhysicalMemory` 存取了受保護的實體記憶體位址**（Windows 10/11 核心安全防禦隔離機制禁止任意實體記憶體映射）。 | 1. **修正 `PROTOCOL_TYPE_NVME = 3`**。<br>2. 保留 `[144..207]` 64 Bytes 錯誤日誌緩衝區。<br>3. 資料區偏移設定為 `208`。<br>4. 透過 PCI Config Space 直接掃描 NVMe BAR0，並具備優雅降級。 |
 | **317** | `ERROR_MR_MID_NOT_FOUND` | **微軟 Storport DMA 限制**：`IOCTL_STORAGE_PROTOCOL_COMMAND` 下發給 `\\.\PhysicalDriveN` 時，若 `DataFromDeviceTransferLength < 512`（例如設為 4B），微軟核心 Storport PRP/DMA 檢查未通過，拋出未映射的 NTSTATUS (Win32 Error 317)。 | 1. DMA 接收緩衝區維持 512B 對齊。<br>2. **使用精確的 Protocol-Query 通道下發自定義長度**。 |
+| **status error 1 (Win11 偽錯誤)** | `STORAGE_PROTOCOL_STATUS_ERROR` | **Windows 11 Storport Data Underrun 誤判**：<br>Win11 的 `stornvme.sys` 原生支援 Pass-Through，因此不會像 Win10 一樣報錯 317 後自動退回 Protocol-Query。然而向系統宣告 DMA 接收長度為 512B，而 SQE CDW10 的 NUMD=0x00（硬體只傳 4B）時，微軟 Storport 檢測到傳回長度小於請求長度，視為 Data Underrun 並在標頭 Offset 16 填入 `ReturnStatus = 1`。舊程式直接取用 `ReturnStatus` 導致在畫面呈現紅字 `status error 1 (FAIL)`，但實際上資料已正確截取。 | **檢驗真正的硬體 CQE DW3 狀態**：<br>在 `ErrorInfo`（Offset 144）檢驗 16-byte NVMe CQE DW3（Offset 156）。<br>提取 `SC = (DW3 >> 1) & 0xFF` 與 `SCT = (DW3 >> 9) & 0x07`。<br>若 `SC == 0` 且 `SCT == 0`（硬體完全成功），或已取得非全 0 的有效資料，自動校正 `status_code = 0 (PASS)`。此外，若該通道狀態非零，自動模式會繼續嘗試 Protocol-Query 取得確定 0 的結果。 |
 | **6** | `ERROR_INVALID_HANDLE` | **64 位元 ctypes 指標截斷陷阱**：`OpenSCManagerW` 或 `CreateFileW` 回傳 64-bit 指標，但 Python `ctypes` 預設回傳型態為 `c_int` (32-bit)，導致指標高位元被截斷，傳遞給 `CreateServiceW` 被系統判定為無效 Handle。 | 1. 顯式設定所有 Win32 SCM API 的 `argtypes` 與 `restype = wintypes.HANDLE`。<br>2. 優先採用 Windows 原生 `sc.exe create` 與 `sc.exe start` 進行服務註冊，完全免除 ctypes 指標型態異常。 |
 | **1275** | `ERROR_DRIVER_BLOCKED` | `WinRing0x64.sys` 驅動被 Windows 11/10 的「記憶體完整性 (HVCI)」或「易受攻擊驅動程式封鎖清單」封鎖。 | 捕捉錯誤碼並引導使用者於 Windows 安全性中心關閉驅動封鎖或使用自定義私有 Opcode 繞過。 |
 | **1117** | `ERROR_IO_DEVICE` | 1. **`ProtocolType` 誤設為 1 (SCSI)**：NVMe 驅動發現請求 Protocol 非 NVMe 直接拒絕。<br>2. `IOCTL_STORAGE_QUERY_PROPERTY` 輸入緩衝區大小非 48 Bytes。<br>3. 請求資料長度超過該 Log Page 的硬體最大長度。 | 1. **修正 `PROTOCOL_TYPE_NVME = 3`**。<br>2. `cbInBuffer` 嚴格限制為 **48 Bytes**。<br>3. `ProtocolDataLength` 精確設定為對應傳輸長度。 |
@@ -39,12 +40,11 @@ WinRing0x64.sys (Ring0)       IOCTL_STORAGE_PROTOCOL_CMD   IOCTL_STORAGE_QUERY_P
 
 ---
 
-## 三、微軟 Protocol-Query 精確長度映射機理 (重大突破)
+## 三、微軟 Protocol-Query 精確長度映射機理
 
 ### 1. `ProtocolDataLength` 與 CDW10.NUMD 的核心計算公式
 - 微軟 `stornvme.sys` 處理 `IOCTL_STORAGE_QUERY_PROPERTY`（`StorageDeviceProtocolSpecificProperty`）時，核心組裝 NVMe SQE 的規則如下：
   $$\text{NUMDL} = \left(\frac{\text{ProtocolDataLength}}{4}\right) - 1$$
-- **先前誤區**：若在結構中寫死 `ProtocolDataLength = 512`，微軟核心就會在 SQE CDW10 中填入 $(512 / 4) - 1 = 127 = \text{0x7F}$！
 - **正確做法**：
   - 當使用者請求 $1\text{ Dword} = 4\text{ Bytes}$（`NUMD = 0x00`）時，將 `ProtocolDataLength` 精確設為 **`4`**。
   - 微軟核心自動計算：$\text{NUMDL} = (4 / 4) - 1 = \mathbf{0x00}$！
@@ -73,13 +73,13 @@ WinRing0x64.sys (Ring0)       IOCTL_STORAGE_PROTOCOL_CMD   IOCTL_STORAGE_QUERY_P
 
 ---
 
-## 六、單元測試驗證體系 (49 項測試)
+## 六、單元測試驗證體系 (50 項測試)
 
 - `test_commands.py` (5 項)：CDW 組合、NUMD 計算與高位傳輸長度。
 - `test_parsers.py` (4 項)：SMART 欄位解析與 Hex Dump 格式化。
 - `test_csv_parser.py` (9 項)：極簡 2 欄 (LID,NUMD)、3 欄 (OPCODE,LID,NUMD)、BOM 與容錯解析。
 - `test_win_ioctl.py` (3 項)：Windows 裝置開啟與錯誤權限處理。
-- `test_nvme_driver.py` (15 項)：多通道路由、降級防護、裁切長度驗證與常數回歸。
+- `test_nvme_driver.py` (16 項)：多通道路由、降級防護、裁切長度驗證、Win11 Underrun 校正與常數回歸。
 - `test_mmio_direct.py` (3 項)：PCIe BAR0 探測、暫存器讀取與 SQE 組裝 Doorbell 測試。
 - `test_device_scanner.py` (2 項)：NVMe 磁碟掃描與 BusType 篩選。
 - `test_batch_runner.py` (3 項)：非阻塞執行緒、錯誤策略與手動中斷。

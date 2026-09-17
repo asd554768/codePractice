@@ -90,12 +90,21 @@ class NvmeDriver:
         ]
 
         errors = []
+        last_success_result = None
         for name, method in methods:
             try:
                 data, status = method(cmd)
-                return data, status, name
+                if status == 0:
+                    return data, 0, name
+                # 若該通道取得資料但 status != 0，暫存為備用結果，繼續嘗試其他通道 (例如 Protocol-Query)
+                if last_success_result is None and data:
+                    last_success_result = (data, status, name)
+                errors.append(f"{name} 狀態碼非零 (0x{status:X})")
             except Exception as e:
                 errors.append(f"{name} 錯誤: {e}")
+
+        if last_success_result is not None:
+            return last_success_result
 
         # 所有通道皆失敗
         err_msg = "\n".join(errors)
@@ -184,10 +193,37 @@ class NvmeDriver:
             if res:
                 return_status = struct.unpack_from("<I", buf.raw, 16)[0]
                 error_code = struct.unpack_from("<I", buf.raw, 20)[0]
-                nvme_status_code = return_status if return_status != 0 else error_code
                 
                 # 裁切回傳資料至使用者請求的長度 (4 Bytes)
                 data = buf.raw[data_buffer_offset : data_buffer_offset + cmd.length_bytes]
+
+                # 關鍵修復：檢驗 NVMe CQE DW3 (Windows 11 Storport 512B vs 4B underrun 誤判校正)
+                cqe_status = None
+                if strat["layout"] == "with_err" and error_info_offset > 0:
+                    # CQE 位於 error_info_offset (144), DW3 在 +12 (156)
+                    cqe_dw3 = struct.unpack_from("<I", buf.raw, error_info_offset + 12)[0]
+                    sc = (cqe_dw3 >> 1) & 0xFF
+                    sct = (cqe_dw3 >> 9) & 0x07
+                    cqe_status = (sct << 8) | sc
+
+                if return_status == 0:
+                    nvme_status_code = 0
+                elif cqe_status is not None and cqe_status == 0:
+                    # 硬體 CQE 狀態為 0 (Success)，微軟 Storport 因 512B vs 4B underrun 回報 ReturnStatus=1
+                    nvme_status_code = 0
+                elif return_status == 1 and any(b != 0 for b in data):
+                    # 若 ReturnStatus=1 但資料緩衝區包含有效非零資料，且無明確硬體 CQE 錯誤，判定為 Underrun PASS
+                    if cqe_status is None or cqe_status == 0:
+                        nvme_status_code = 0
+                    else:
+                        nvme_status_code = cqe_status
+                elif cqe_status is not None and cqe_status != 0:
+                    nvme_status_code = cqe_status
+                elif error_code != 0:
+                    nvme_status_code = error_code
+                else:
+                    nvme_status_code = return_status
+
                 return data, nvme_status_code
             else:
                 last_error_code = ctypes.GetLastError()
