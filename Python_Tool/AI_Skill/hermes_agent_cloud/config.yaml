@@ -1,0 +1,46 @@
+# ============================================================
+# Hermes Agent — Sub-Agent Router 配置
+# 韌體工程師用：C review (地端) + Python 工具開發 (雲端)
+# 預算：$200/月
+# ============================================================
+
+# --- 主模型：用最便宜的當 Router（只做分流判斷）---
+model:
+  provider: openai-compatible
+  model: gemini-2.5-flash-lite
+  base_url: ${ROUTER_BASE_URL}
+  api_key: ${ROUTER_API_KEY}
+
+# --- Agent 行為 ---
+agent:
+  max_turns: 60
+  reasoning_effort: medium
+
+# --- 輔助模型 ---
+auxiliary:
+  # 長對話摘要壓縮 → 用最便宜的
+  compression:
+    provider: openai-compatible
+    model: gemini-2.5-flash-lite
+    base_url: ${ROUTER_BASE_URL}
+    api_key: ${ROUTER_API_KEY}
+  # 圖片理解（示波器截圖、電路圖、PCB layout）
+  vision:
+    provider: openai-compatible
+    model: claude-sonnet-5
+    base_url: ${ROUTER_BASE_URL}
+    api_key: ${ROUTER_API_KEY}
+
+# --- 委派設定（Sub-Agent）---
+delegation:
+  provider: openai-compatible
+  model: claude-sonnet-5              # Sub-Agent 預設用 Sonnet
+  base_url: ${ROUTER_BASE_URL}
+  api_key: ${ROUTER_API_KEY}
+  max_concurrent_children: 3          # 最多同時跑 3 個 sub-agent
+  max_spawn_depth: 1                  # 1 = 扁平（不允許 sub-agent 再生 sub-agent）
+  orchestrator_enabled: true          # 允許主 agent 當 orchestrator
+
+# --- 日誌（debug 分流是否正確）---
+logging:
+  subagent_log_each: true

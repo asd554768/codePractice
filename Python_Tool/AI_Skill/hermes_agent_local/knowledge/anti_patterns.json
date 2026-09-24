@@ -1,0 +1,42 @@
+[
+  {
+    "id": "ERR-001",
+    "trigger_keywords": ["DMA", "UART", "SPI", "Stack", "Local Variable"],
+    "title": "DMA Buffer 放在局部變數導致 HardFault / Memory Corruption",
+    "forbidden_pattern": "uint8_t buf[64]; HAL_UART_Receive_DMA(&huart1, buf, 64);",
+    "mandatory_solution": "static uint8_t buf[64] __attribute__((aligned(4)));",
+    "rationale": "函式返回後 stack frame 被釋放，DMA 繼續寫入已失效的記憶體空間，觸發 HardFault 或踩壞其他變數。"
+  },
+  {
+    "id": "ERR-002",
+    "trigger_keywords": ["ISR", "printf", "malloc", "free", "osDelay", "Block"],
+    "title": "ISR 內部呼叫阻塞函式或非 Reentrant 函式",
+    "forbidden_pattern": "void EXTI0_IRQHandler(void) { printf(\"IRQ triggered\\n\"); osDelay(10); }",
+    "mandatory_solution": "void EXTI0_IRQHandler(void) { BaseType_t xHigherPriorityTaskWoken = pdFALSE; vTaskNotifyGiveFromISR(xTaskHandle, &xHigherPriorityTaskWoken); portYIELD_FROM_ISR(xHigherPriorityTaskWoken); }",
+    "rationale": "ISR 執行時間需在微秒級，呼叫 printf/malloc 或 OS 阻塞等待會破壞即時性甚至死鎖。"
+  },
+  {
+    "id": "ERR-003",
+    "trigger_keywords": ["volatile", "ISR", "Flag", "Optimization", "Compiler"],
+    "title": "ISR 與 Main Loop 共用旗標未加 volatile 修飾",
+    "forbidden_pattern": "bool g_data_ready = false;",
+    "mandatory_solution": "volatile bool g_data_ready = false;",
+    "rationale": "編譯器最佳化 (-O2/-O3) 會將變數快取於暫存器，導致 main loop 永遠看不到 ISR 修改的值。"
+  },
+  {
+    "id": "ERR-004",
+    "trigger_keywords": ["struct", "pack", "alignment", "Python", "struct.unpack"],
+    "title": "C 語言結構體 Padding 導致 Python struct 解析偏移",
+    "forbidden_pattern": "struct Packet { uint8_t cmd; uint32_t len; }; // 預設 32-bit alignment 會塞 3-byte padding",
+    "mandatory_solution": "#pragma pack(push, 1)\nstruct Packet { uint8_t cmd; uint32_t len; };\n#pragma pack(pop)\n// Python 對應: struct.unpack('<BI', data)",
+    "rationale": "若 C 未緊湊打包，Python 端用 '<BI' 解讀會產生 3 bytes 的位移錯位。"
+  },
+  {
+    "id": "ERR-005",
+    "trigger_keywords": ["Critical Section", "Read-Modify-Write", "Race Condition"],
+    "title": "暫存器或全域變數 Read-Modify-Write 未進臨界區保護",
+    "forbidden_pattern": "g_status_flags |= FLAG_TX_BUSY; // 非原子操作",
+    "mandatory_solution": "uint32_t primask = __get_PRIMASK();\n__disable_irq();\ng_status_flags |= FLAG_TX_BUSY;\n__set_PRIMASK(primask);",
+    "rationale": "在多工或中斷環境下，讀-改-寫指令可能被中斷打斷，導致狀態旗標覆蓋遺失。"
+  }
+]

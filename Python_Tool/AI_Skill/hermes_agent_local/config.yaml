@@ -1,0 +1,73 @@
+# ============================================================
+# Hermes Agent (地端版) — Sub-Agent Router 配置
+# 全部模型跑在公司 GB300 叢集，零雲端依賴
+# 可用模型：DeepSeek V4.1 Flash / GLM-5.3 Flash / Qwen 3.8-27B
+# ============================================================
+
+# --- 主模型：Router（用最小的 Qwen 27B 做分流判斷）---
+model:
+  provider: openai-compatible
+  model: qwen3.8-27b
+  base_url: ${QWEN_27B_BASE_URL}
+  api_key: ${QWEN_27B_API_KEY}
+
+# --- Agent 行為 ---
+agent:
+  max_turns: 80
+  reasoning_effort: medium
+
+# --- 輔助模型 ---
+auxiliary:
+  # 長對話摘要壓縮
+  compression:
+    provider: openai-compatible
+    model: qwen3.8-27b
+    base_url: ${QWEN_27B_BASE_URL}
+    api_key: ${QWEN_27B_API_KEY}
+  # 圖片理解（示波器截圖、電路圖、PCB layout）
+  vision:
+    provider: openai-compatible
+    model: glm-5.3-flash
+    base_url: ${GLM_BASE_URL}
+    api_key: ${GLM_API_KEY}
+  # Skill 搜尋、session 標題等雜務
+  management:
+    provider: openai-compatible
+    model: qwen3.8-27b
+    base_url: ${QWEN_27B_BASE_URL}
+    api_key: ${QWEN_27B_API_KEY}
+
+# --- 委派設定（Sub-Agent）---
+delegation:
+  provider: openai-compatible
+  model: deepseek-v4.1-flash
+  base_url: ${DEEPSEEK_BASE_URL}
+  api_key: ${DEEPSEEK_API_KEY}
+  max_concurrent_children: 5
+  max_spawn_depth: 1
+  orchestrator_enabled: true
+
+# --- MoA（Release 前正式 Review / 深度除錯）---
+# 雙模型：DeepSeek（bug + tool call）+ GLM（安全 + 架構）
+moa:
+  default_preset: firmware-full-review
+  presets:
+    firmware-full-review:
+      reference_models:
+        - provider: openai-compatible
+          model: deepseek-v4.1-flash
+          base_url: ${DEEPSEEK_BASE_URL}
+          api_key: ${DEEPSEEK_API_KEY}
+        - provider: openai-compatible
+          model: glm-5.3-flash
+          base_url: ${GLM_BASE_URL}
+          api_key: ${GLM_API_KEY}
+      aggregator:
+        provider: openai-compatible
+        model: deepseek-v4.1-flash
+        base_url: ${DEEPSEEK_BASE_URL}
+        api_key: ${DEEPSEEK_API_KEY}
+
+# --- 日誌 ---
+logging:
+  subagent_log_each: true
